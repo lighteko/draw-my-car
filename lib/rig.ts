@@ -1,4 +1,4 @@
-import { Box3, MathUtils, Object3D, Vector3 } from "three";
+import { Box3, MathUtils, Mesh, Object3D, Vector3 } from "three";
 
 /**
  * rig.ts - seam between generated visual meshes and the physics rig.
@@ -65,20 +65,129 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * Normalize a generated mesh in place so its long horizontal axis is +Z, it is
- * centered at the chassis origin, and its size is in sane vehicle-scale meters.
+ * Invoke `cb` for each mesh vertex of `object`, transformed into world space.
+ * Callers must have updated the object's world matrices first. A single Vector3 is
+ * reused between calls, so `cb` must read it immediately rather than retain it.
+ */
+function forEachWorldVertex(object: Object3D, cb: (v: Vector3) => void): void {
+  const v = new Vector3();
+  object.traverse((child) => {
+    if (!(child instanceof Mesh)) return;
+    const pos = child.geometry.getAttribute("position");
+    if (!pos) return;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(child.matrixWorld);
+      cb(v);
+    }
+  });
+}
+
+/**
+ * Yaw (rotation about +Y) of the model's dominant horizontal axis, via PCA over the
+ * vertices projected onto the ground (XZ) plane.
+ *
+ * Generated cars are reconstructed from a 3/4 "front-left corner" render with Tripo's
+ * orientation=align_image, so their length axis inherits the camera's yaw and points
+ * ~10-20° off +Z. A 90° bounding-box swap can't undo that; this recovers the angle so
+ * the caller can cancel it. Returns the angle of the longest footprint axis measured
+ * from +Z toward +X, or null for an empty mesh.
+ */
+function horizontalPrincipalYaw(object: Object3D): number | null {
+  object.updateMatrixWorld(true);
+
+  let n = 0;
+  let cx = 0;
+  let cz = 0;
+  forEachWorldVertex(object, (v) => {
+    cx += v.x;
+    cz += v.z;
+    n++;
+  });
+  if (n === 0) return null;
+  cx /= n;
+  cz /= n;
+
+  // Covariance of the centered XZ footprint.
+  let sxx = 0;
+  let sxz = 0;
+  let szz = 0;
+  forEachWorldVertex(object, (v) => {
+    const dx = v.x - cx;
+    const dz = v.z - cz;
+    sxx += dx * dx;
+    sxz += dx * dz;
+    szz += dz * dz;
+  });
+
+  // Major eigenvector of the symmetric 2x2 covariance [[sxx, sxz], [sxz, szz]].
+  if (Math.abs(sxz) < 1e-9) {
+    // Already axis-aligned: length is on Z (yaw 0) or on X (yaw 90°).
+    return sxx > szz ? Math.PI / 2 : 0;
+  }
+  const tr = sxx + szz;
+  const det = sxx * szz - sxz * sxz;
+  const major = tr / 2 + Math.sqrt(Math.max(0, (tr * tr) / 4 - det));
+  return Math.atan2(major - szz, sxz);
+}
+
+/**
+ * Whether the car points -Z (nose at the rear) once its length axis is already on Z.
+ * Heuristic: a car's cabin/roof mass sits toward the back, so if the upper body leans
+ * +Z then the nose is at -Z. Conservative — only reports backward past a small deadband
+ * (~5% of body length) so near-symmetric toys aren't sent backwards by noise.
+ */
+function facesBackward(object: Object3D): boolean {
+  const box = getBounds(object);
+  if (box.isEmpty()) return false;
+  const center = box.getCenter(new Vector3());
+  const halfLength = (box.max.z - box.min.z) / 2;
+
+  let zSum = 0;
+  let count = 0;
+  forEachWorldVertex(object, (v) => {
+    if (v.y >= center.y) {
+      zSum += v.z;
+      count++;
+    }
+  });
+  if (count === 0) return false;
+
+  return zSum / count - center.z > halfLength * 0.1;
+}
+
+/**
+ * Normalize a generated mesh in place so its long horizontal axis is +Z, it faces
+ * forward (+Z), is centered at the chassis origin, and its size is in sane
+ * vehicle-scale meters.
  */
 export function normalizeOrientation(object: Object3D): void {
   let box = getBounds(object);
   if (box.isEmpty()) return;
 
+  // 1. Cancel the inherited 3/4-camera yaw: rotate the dominant footprint axis onto Z.
+  const yaw = horizontalPrincipalYaw(object);
+  if (yaw != null) {
+    object.rotateY(-yaw);
+    object.updateMatrixWorld(true);
+  }
+
+  // 2. Guard square footprints: if the long extent still reads as X, swap X<->Z.
+  box = getBounds(object);
   let size = box.getSize(new Vector3());
   if (size.x > size.z) {
     object.rotateY(Math.PI / 2);
-    box = getBounds(object);
-    size = box.getSize(new Vector3());
+    object.updateMatrixWorld(true);
   }
 
+  // 3. Point the nose toward +Z (physics forward), flipping if the body reads backwards.
+  if (facesBackward(object)) {
+    object.rotateY(Math.PI);
+    object.updateMatrixWorld(true);
+  }
+
+  // 4. Scale to vehicle length, then center on the chassis origin.
+  box = getBounds(object);
+  size = box.getSize(new Vector3());
   const length = Math.max(size.z, size.x);
   if (length > 0) {
     object.scale.multiplyScalar(TARGET_LENGTH_METERS / length);
@@ -88,6 +197,14 @@ export function normalizeOrientation(object: Object3D): void {
   const center = box.getCenter(new Vector3());
   object.position.sub(center);
   object.updateMatrixWorld(true);
+
+  if (process.env.NODE_ENV !== "production") {
+    const residual = horizontalPrincipalYaw(object);
+    if (residual != null) {
+      const deg = (rad: number) => ((rad * 180) / Math.PI).toFixed(1);
+      console.debug(`[rig] normalizeOrientation yaw ${deg(yaw ?? 0)}° -> ${deg(residual)}°`);
+    }
+  }
 }
 
 /**
