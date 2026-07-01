@@ -154,10 +154,11 @@ export function Lobby({
   const players = members.filter((m) => m.role === "player");
   const canStart = players.length >= 1 && players.every((p) => p.ready && p.carId);
 
-  const startRace = () => {
+  const startRace = async () => {
     const resolved = resolveTrackId(settings.trackId);
     const grid: GridSlot[] = players.map((p, i) => ({ deviceId: p.deviceId, slot: i }));
-    handleRef.current?.send({
+    // Await the broadcast so it flushes before we navigate away (which closes the channel).
+    await handleRef.current?.send({
       kind: "start",
       trackId: resolved,
       laps: settings.laps,

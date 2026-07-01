@@ -13,7 +13,8 @@ import type { PresenceMeta, RoomMessage } from "./roomTypes";
  */
 
 export interface RoomHandle {
-  send(msg: RoomMessage): void;
+  /** Resolves once the relay has acked the broadcast — await before navigating away. */
+  send(msg: RoomMessage): Promise<unknown>;
   updatePresence(meta: PresenceMeta): void;
   leave(): void;
 }
@@ -48,7 +49,7 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
 
   return {
     send(msg) {
-      void channel.send({ type: "broadcast", event: "msg", payload: msg });
+      return channel.send({ type: "broadcast", event: "msg", payload: msg });
     },
     updatePresence(meta) {
       current = meta;
