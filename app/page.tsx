@@ -2,9 +2,11 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { usePlayer } from "@/lib/identity";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
+import { hasBrowserSupabase } from "@/lib/supabase-browser";
 import type { Car } from "@/lib/cars";
 import { CreateCarModal } from "@/components/CreateCarModal";
 
@@ -21,9 +23,11 @@ const ACTIVE_CAR_KEY = "dmc_active_car";
 
 export default function Home() {
   const { username, ready } = usePlayer();
+  const router = useRouter();
   const [cars, setCars] = useState<Car[] | null>(null);
   const [index, setIndex] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
+  const [creatingRoom, setCreatingRoom] = useState(false);
 
   useEffect(() => {
     if (!ready) return;
@@ -60,6 +64,19 @@ export default function Home() {
 
   const prev = () => setIndex((i) => (i - 1 + count) % count);
   const next = () => setIndex((i) => (i + 1) % count);
+
+  const multiplayer = hasBrowserSupabase();
+  const canPlay = count > 0 && multiplayer;
+
+  const play = useCallback(async () => {
+    setCreatingRoom(true);
+    try {
+      const { room } = await apiPost<{ room: { code: string } }>("/api/rooms");
+      router.push(`/r/${room.code}`);
+    } catch {
+      setCreatingRoom(false);
+    }
+  }, [router]);
 
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-gradient-to-b from-neutral-700 via-neutral-900 to-black text-white">
@@ -129,14 +146,23 @@ export default function Home() {
 
         <button
           type="button"
-          disabled
-          title="Multiplayer rooms arrive in the next update"
-          className="relative rounded-full bg-emerald-600/50 px-10 py-3 text-base font-bold text-white/70 shadow-lg"
+          onClick={play}
+          disabled={!canPlay || creatingRoom}
+          title={
+            count === 0
+              ? "Create a car first"
+              : multiplayer
+                ? "Create a room and invite friends"
+                : "Multiplayer needs Supabase configured"
+          }
+          className="relative rounded-full bg-emerald-600 px-10 py-3 text-base font-bold text-white shadow-lg transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-emerald-600/40 disabled:text-white/60"
         >
-          Play
-          <span className="absolute -right-2 -top-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-black">
-            soon
-          </span>
+          {creatingRoom ? "Creating room…" : "Play"}
+          {!multiplayer && (
+            <span className="absolute -right-2 -top-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-black">
+              soon
+            </span>
+          )}
         </button>
 
         {selected && (

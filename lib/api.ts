@@ -31,3 +31,13 @@ export async function apiPost<T>(url: string, body?: unknown): Promise<T> {
     }),
   );
 }
+
+export async function apiPatch<T>(url: string, body?: unknown): Promise<T> {
+  return parse<T>(
+    await fetch(url, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...deviceHeaders() },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  );
+}
