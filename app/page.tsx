@@ -1,231 +1,170 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { DrawCanvas } from "@/components/DrawCanvas";
+import { useCallback, useEffect, useState } from "react";
+import { usePlayer } from "@/lib/identity";
+import { apiGet } from "@/lib/api";
+import type { Car } from "@/lib/cars";
+import { CreateCarModal } from "@/components/CreateCarModal";
 
-type Phase =
-  | "idle"
-  | "submitting"
-  | "generatingViews"
-  | "review"
-  | "buildingModel"
-  | "ready"
-  | "error";
+/**
+ * Home = the garage. A rotating turntable of the device's cars with a Play button.
+ * The turntable is WebGL, so it's dynamic-imported client-only (ssr: false).
+ */
+const GarageTurntable = dynamic(
+  () => import("@/components/GarageTurntable").then((m) => m.GarageTurntable),
+  { ssr: false, loading: () => <div className="h-full w-full" /> },
+);
 
-interface StoredView {
-  key: string;
-  url: string;
-}
-
-interface JobStatus {
-  jobId: string;
-  status: "pending" | "processing" | "review" | "ready" | "failed";
-  stage: "multiview" | "review" | "model" | null;
-  carId: string;
-  carUrl: string | null;
-  render: StoredView | null;
-  progress?: number | null;
-  error?: string | null;
-}
-
-function responseError(body: unknown): string | null {
-  if (!body || typeof body !== "object") return null;
-  const error = (body as { error?: unknown }).error;
-  return typeof error === "string" ? error : null;
-}
-
-async function jsonOrError<T>(res: Response, label: string): Promise<T> {
-  const body = (await res.json().catch(() => null)) as unknown;
-  if (!res.ok) {
-    throw new Error(responseError(body) ?? `${label} failed (${res.status})`);
-  }
-  return body as T;
-}
+const ACTIVE_CAR_KEY = "dmc_active_car";
 
 export default function Home() {
-  const image = useRef<string | null>(null);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [carId, setCarId] = useState<string | null>(null);
-  const [render, setRender] = useState<StoredView | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { username, ready } = usePlayer();
+  const [cars, setCars] = useState<Car[] | null>(null);
+  const [index, setIndex] = useState(0);
+  const [modalOpen, setModalOpen] = useState(false);
 
-  const pollJob = useCallback(async (id: string, stopAtReview: boolean) => {
-    for (let i = 0; i < 300; i++) {
-      const status = await jsonOrError<JobStatus>(await fetch(`/api/jobs/${id}`), "poll");
-
-      if (status.status === "review" && status.render) {
-        setRender(status.render);
-        setPhase("review");
-        return;
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiGet<{ cars: Car[] }>("/api/cars");
+        if (!cancelled) setCars(res.cars);
+      } catch {
+        if (!cancelled) setCars([]);
       }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ready]);
 
-      if (status.status === "ready") {
-        setCarId(status.carId);
-        setPhase("ready");
-        return;
-      }
+  const count = cars?.length ?? 0;
+  const selected = cars && cars.length > 0 ? cars[Math.min(index, cars.length - 1)] : null;
 
-      if (status.status === "failed") {
-        throw new Error(status.error ?? "generation failed");
-      }
+  // Remember the active car for the (next-phase) racing flow.
+  useEffect(() => {
+    if (selected) window.localStorage.setItem(ACTIVE_CAR_KEY, selected.id);
+  }, [selected]);
 
-      setPhase(stopAtReview ? "generatingViews" : "buildingModel");
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-    }
-
-    throw new Error("timed out waiting for the car");
+  const onCreated = useCallback((car: Car) => {
+    setCars((prev) => {
+      const next = [...(prev ?? []), car];
+      setIndex(next.length - 1);
+      return next;
+    });
+    setModalOpen(false);
   }, []);
 
-  const generate = useCallback(async () => {
-    if (!image.current) {
-      setError("Draw or upload a car first.");
-      setPhase("error");
-      return;
-    }
-
-    setError(null);
-    setCarId(null);
-    setJobId(null);
-    setRender(null);
-    setPhase("submitting");
-
-    try {
-      const status = await jsonOrError<{ jobId: string }>(
-        await fetch("/api/jobs", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ image: image.current }),
-        }),
-        "submit",
-      );
-
-      setJobId(status.jobId);
-      setPhase("generatingViews");
-      await pollJob(status.jobId, true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "something went wrong");
-      setPhase("error");
-    }
-  }, [pollJob]);
-
-  const approveMultiview = useCallback(async () => {
-    if (!jobId) return;
-
-    setError(null);
-    setPhase("buildingModel");
-
-    try {
-      await jsonOrError<JobStatus>(
-        await fetch(`/api/jobs/${jobId}`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "approve_multiview" }),
-        }),
-        "start model build",
-      );
-      await pollJob(jobId, false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "something went wrong");
-      setPhase("review");
-    }
-  }, [jobId, pollJob]);
-
-  const busy =
-    phase === "submitting" || phase === "generatingViews" || phase === "buildingModel";
-
-  const buttonText =
-    phase === "submitting"
-      ? "Generating views..."
-      : phase === "generatingViews"
-        ? "Generating views..."
-        : phase === "buildingModel"
-          ? "Building 3D..."
-          : "Generate views";
+  const prev = () => setIndex((i) => (i - 1 + count) % count);
+  const next = () => setIndex((i) => (i + 1) % count);
 
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-6 py-12">
-      <header className="flex flex-col gap-2">
-        <span className="font-mono text-xs uppercase tracking-widest text-blue-600">
-          Sketch-to-Drive v1
-        </span>
-        <h1 className="text-3xl font-bold sm:text-4xl">Draw a car. Then drive it.</h1>
-        <p className="max-w-2xl text-neutral-500">
-          Sketch or upload a 2D car, expand it into four consistent views, approve the
-          result, then build a drivable 3D model for the physics sandbox.
-        </p>
+    <main className="relative h-screen w-screen overflow-hidden bg-gradient-to-b from-neutral-700 via-neutral-900 to-black text-white">
+      <div className="absolute inset-0">
+        <GarageTurntable glbUrl={selected?.glbUrl ?? null} />
+      </div>
+
+      {/* Top bar */}
+      <header className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-5">
+        <div>
+          <div className="font-mono text-xs uppercase tracking-widest text-emerald-400">
+            Sketch-to-Drive
+          </div>
+          <div className="text-lg font-bold">Garage</div>
+        </div>
+        {ready && (
+          <div className="pointer-events-auto rounded-full bg-white/10 px-3 py-1.5 text-sm backdrop-blur">
+            {username}
+          </div>
+        )}
       </header>
 
-      <div className="grid gap-8 md:grid-cols-[1fr_20rem]">
-        <section>
-          <DrawCanvas onChange={(dataUrl) => (image.current = dataUrl)} />
-        </section>
-
-        <aside className="flex flex-col gap-4">
+      {/* Empty state */}
+      {cars !== null && count === 0 && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <button
             type="button"
-            onClick={generate}
-            disabled={busy}
-            className="rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={() => setModalOpen(true)}
+            className="pointer-events-auto flex flex-col items-center gap-4 rounded-3xl border-2 border-dashed border-white/25 px-14 py-12 text-center transition hover:border-emerald-400/70 hover:bg-white/5"
           >
-            {buttonText}
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-600 text-4xl font-light leading-none shadow-lg">
+              +
+            </span>
+            <span className="text-lg font-semibold">Create your first car</span>
+            <span className="max-w-xs text-sm text-neutral-400">
+              Draw a car and we&apos;ll turn it into a drivable 3D model.
+            </span>
           </button>
+        </div>
+      )}
 
-          {jobId && (
-            <div className="rounded-lg border border-black/10 bg-black/[0.03] p-3 font-mono text-xs dark:border-white/10 dark:bg-white/[0.03]">
-              <div className="text-neutral-500">job</div>
-              <div className="break-all">{jobId}</div>
+      {/* Car name + carousel nav */}
+      {selected && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-28 flex items-center justify-center gap-8">
+          {count > 1 && <NavArrow dir="left" onClick={prev} />}
+          <div className="text-center">
+            <div className="text-xl font-semibold">{selected.name ?? "Untitled car"}</div>
+            <div className="mt-1 text-xs text-neutral-400">
+              {index + 1} / {count}
             </div>
-          )}
-
-          {phase === "review" && render && (
-            <div className="rounded-lg border border-black/10 bg-black/[0.03] p-3 dark:border-white/10 dark:bg-white/[0.03]">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <h2 className="text-sm font-semibold">3D render preview</h2>
-                <span className="text-xs text-neutral-500">review</span>
-              </div>
-              <figure className="overflow-hidden rounded-md bg-white dark:bg-black">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={render.url}
-                  alt="generated 3D render"
-                  className="aspect-square w-full object-contain"
-                />
-              </figure>
-              <button
-                type="button"
-                onClick={approveMultiview}
-                disabled={busy}
-                className="mt-3 w-full rounded-lg bg-emerald-600 px-4 py-2.5 font-semibold text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Build 3D model
-              </button>
-            </div>
-          )}
-
-          {phase === "ready" && carId && (
-            <Link
-              href={`/simulate/${carId}`}
-              className="rounded-lg bg-emerald-600 px-4 py-3 text-center font-semibold text-white shadow-sm transition hover:bg-emerald-500"
-            >
-              Drive it
-            </Link>
-          )}
-
-          {error && <p className="text-sm text-red-500">{error}</p>}
-
-          <div className="mt-2 border-t border-black/10 pt-4 dark:border-white/10">
-            <p className="mb-2 text-xs text-neutral-500">Skip the pipeline:</p>
-            <Link
-              href="/simulate/placeholder"
-              className="inline-block rounded-lg border border-black/15 px-4 py-2 text-sm font-medium hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
-            >
-              Drive the placeholder
-            </Link>
           </div>
-        </aside>
+          {count > 1 && <NavArrow dir="right" onClick={next} />}
+        </div>
+      )}
+
+      {/* Bottom action bar */}
+      <div className="absolute inset-x-0 bottom-6 flex items-center justify-center gap-3 px-4">
+        {count > 0 && (
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="rounded-full border border-white/20 bg-white/5 px-4 py-3 text-sm font-medium backdrop-blur transition hover:bg-white/10"
+          >
+            + Add car
+          </button>
+        )}
+
+        <button
+          type="button"
+          disabled
+          title="Multiplayer rooms arrive in the next update"
+          className="relative rounded-full bg-emerald-600/50 px-10 py-3 text-base font-bold text-white/70 shadow-lg"
+        >
+          Play
+          <span className="absolute -right-2 -top-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-black">
+            soon
+          </span>
+        </button>
+
+        {selected && (
+          <Link
+            href={`/simulate/${selected.id}`}
+            className="rounded-full border border-white/20 bg-white/5 px-4 py-3 text-sm font-medium backdrop-blur transition hover:bg-white/10"
+          >
+            Test drive
+          </Link>
+        )}
       </div>
+
+      {modalOpen && (
+        <CreateCarModal onClose={() => setModalOpen(false)} onCreated={onCreated} />
+      )}
     </main>
+  );
+}
+
+function NavArrow({ dir, onClick }: { dir: "left" | "right"; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-white/5 text-xl backdrop-blur transition hover:bg-white/15"
+      aria-label={dir === "left" ? "Previous car" : "Next car"}
+    >
+      {dir === "left" ? "‹" : "›"}
+    </button>
   );
 }

@@ -24,3 +24,44 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Living-loading-art: a sweeping sheen over the generated render while the 3D builds. */
+@keyframes dmc-shimmer {
+  0% {
+    transform: translateX(-130%) skewX(-12deg);
+  }
+  100% {
+    transform: translateX(230%) skewX(-12deg);
+  }
+}
+.dmc-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.dmc-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 65%
+  );
+  transform: translateX(-130%) skewX(-12deg);
+  animation: dmc-shimmer 1.9s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes dmc-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-10px) rotate(1deg);
+  }
+}
+.dmc-float {
+  animation: dmc-float 4s ease-in-out infinite;
+}
