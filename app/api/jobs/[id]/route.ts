@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getJob, updateJob, type StoredView } from "@/lib/db";
+import { getJob, updateJob, type Job, type StoredView } from "@/lib/db";
 import { getProvider } from "@/lib/providers/tripo";
 import type { MultiviewImages, ViewName } from "@/lib/providers";
 import {
@@ -11,7 +11,7 @@ import {
 
 const VIEW_ORDER: readonly ViewName[] = ["front", "left", "back", "right"];
 
-function responseForJob(job: NonNullable<ReturnType<typeof getJob>>, progress?: number): NextResponse {
+function responseForJob(job: Job, progress?: number): NextResponse {
   return NextResponse.json({
     jobId: job.id,
     status: job.status,
@@ -62,7 +62,7 @@ export async function GET(
     });
   }
 
-  const job = getJob(id);
+  const job = await getJob(id);
   if (!job) {
     return NextResponse.json({ error: "job not found" }, { status: 404 });
   }
@@ -74,10 +74,10 @@ export async function GET(
     const provider = getProvider();
     if (!provider) {
       current =
-        updateJob(job.id, {
+        (await updateJob(job.id, {
           status: "failed",
           error: "TRIPO_API_KEY is not configured",
-        }) ?? job;
+        })) ?? job;
     } else {
       try {
         const stage = job.stage ?? "model";
@@ -95,18 +95,18 @@ export async function GET(
             }
             const multiview = await saveMultiview(job.id, task.multiviewUrls);
             current =
-              updateJob(job.id, {
+              (await updateJob(job.id, {
                 status: "review",
                 stage: "review",
                 multiview,
                 error: undefined,
-              }) ?? job;
+              })) ?? job;
           } else if (task.status === "failed") {
             current =
-              updateJob(job.id, {
+              (await updateJob(job.id, {
                 status: "failed",
                 error: task.error ?? "Tripo multiview generation failed",
-              }) ?? job;
+              })) ?? job;
           }
         } else {
           const taskId = job.modelTaskId ?? job.taskId;
@@ -119,27 +119,27 @@ export async function GET(
             if (!task.modelUrl) throw new Error("Tripo task succeeded without a model URL");
             const stored = await saveRemoteModel(task.modelUrl, `models/${job.id}.glb`);
             current =
-              updateJob(job.id, {
+              (await updateJob(job.id, {
                 status: "ready",
                 stage: "model",
                 carId: job.id,
                 carUrl: stored.url,
                 error: undefined,
-              }) ?? job;
+              })) ?? job;
           } else if (task.status === "failed") {
             current =
-              updateJob(job.id, {
+              (await updateJob(job.id, {
                 status: "failed",
                 error: task.error ?? "Tripo generation failed",
-              }) ?? job;
+              })) ?? job;
           }
         }
       } catch (e) {
         current =
-          updateJob(job.id, {
+          (await updateJob(job.id, {
             status: "failed",
             error: e instanceof Error ? e.message : "failed to poll Tripo task",
-          }) ?? job;
+          })) ?? job;
       }
     }
   }
@@ -155,7 +155,7 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await ctx.params;
-  const job = getJob(id);
+  const job = await getJob(id);
 
   if (!job) {
     return NextResponse.json({ error: "job not found" }, { status: 404 });
@@ -190,18 +190,18 @@ export async function POST(
     });
 
     const updated =
-      updateJob(job.id, {
+      (await updateJob(job.id, {
         status: "processing",
         stage: "model",
         taskId,
         modelTaskId: taskId,
         error: undefined,
-      }) ?? job;
+      })) ?? job;
 
     return responseForJob(updated);
   } catch (e) {
     const message = e instanceof Error ? e.message : "failed to submit multiview model task";
-    updateJob(job.id, { error: message });
+    await updateJob(job.id, { error: message });
     return NextResponse.json({ jobId: job.id, status: job.status, error: message }, { status: 502 });
   }
 }

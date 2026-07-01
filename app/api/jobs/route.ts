@@ -75,7 +75,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "OPENAI_API_KEY is not configured" }, { status: 503 });
   }
 
-  const job = createJob({ status: "pending" });
+  const job = await createJob({ status: "pending" });
 
   try {
     const stored = await uploadImage(image.bytes, image.contentType);
@@ -92,12 +92,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
 
     const updated =
-      updateJob(job.id, {
+      (await updateJob(job.id, {
         status: "review",
         stage: "review",
         inputKey: stored.key,
         render,
-      }) ?? job;
+      })) ?? job;
 
     return NextResponse.json(
       {
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   } catch (e) {
     const message = e instanceof Error ? e.message : "failed to generate views";
-    updateJob(job.id, { status: "failed", error: message });
+    await updateJob(job.id, { status: "failed", error: message });
     return NextResponse.json({ jobId: job.id, status: "failed", error: message }, { status: 502 });
   }
 }
