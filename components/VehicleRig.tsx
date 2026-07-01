@@ -46,11 +46,17 @@ export function VehicleRig({
   bodyRef,
   visual,
   position = [0, 1.2, 0],
+  rotationY = 0,
+  enabled = true,
 }: {
   rig: RigSpec;
   bodyRef: RefObject<RapierRigidBody | null>;
   visual?: ReactNode;
   position?: [number, number, number];
+  /** Spawn heading (yaw, radians). Also restored on reset. */
+  rotationY?: number;
+  /** When false, the car is held braked at the line (e.g. during the countdown). */
+  enabled?: boolean;
 }) {
   const { world } = useRapier();
   const controllerRef = useRef<DynamicRayCastVehicleController | null>(null);
@@ -116,20 +122,25 @@ export function VehicleRig({
     const dt = world.timestep;
 
     if (keys.reset) {
+      const half = rotationY / 2;
       chassis.setTranslation({ x: position[0], y: position[1], z: position[2] }, true);
-      chassis.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      chassis.setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }, true);
       chassis.setLinvel({ x: 0, y: 0, z: 0 }, true);
       chassis.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
 
     let engine = 0;
-    if (keys.forward) engine = ENGINE_FORCE;
-    else if (keys.back) engine = -REVERSE_FORCE;
-    const brake = keys.brake ? BRAKE_FORCE : 0;
-
+    let brake = keys.brake ? BRAKE_FORCE : 0;
     let steerTarget = 0;
-    if (keys.left) steerTarget += MAX_STEER;
-    if (keys.right) steerTarget -= MAX_STEER;
+    if (enabled) {
+      if (keys.forward) engine = ENGINE_FORCE;
+      else if (keys.back) engine = -REVERSE_FORCE;
+      if (keys.left) steerTarget += MAX_STEER;
+      if (keys.right) steerTarget -= MAX_STEER;
+    } else {
+      // Held at the grid during the countdown.
+      brake = BRAKE_FORCE;
+    }
     steerRef.current = THREE.MathUtils.damp(steerRef.current, steerTarget, STEER_DAMP, dt);
 
     rig.wheels.forEach((w, i) => {
@@ -166,6 +177,7 @@ export function VehicleRig({
     <RigidBody
       ref={bodyRef}
       position={position}
+      rotation={[0, rotationY, 0]}
       colliders={false}
       canSleep={false}
       ccd

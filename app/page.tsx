@@ -167,10 +167,10 @@ export default function Home() {
 
         {selected && (
           <Link
-            href={`/simulate/${selected.id}`}
+            href={`/race/random?car=${selected.id}`}
             className="rounded-full border border-white/20 bg-white/5 px-4 py-3 text-sm font-medium backdrop-blur transition hover:bg-white/10"
           >
-            Test drive
+            Practice
           </Link>
         )}
       </div>

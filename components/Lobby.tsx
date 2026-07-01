@@ -9,10 +9,11 @@ import { usePlayer } from "@/lib/identity";
 import { hasBrowserSupabase } from "@/lib/supabase-browser";
 import { joinRoom, type RoomHandle } from "@/lib/realtime";
 import { apiGet, apiPatch } from "@/lib/api";
-import { TRACKS, trackName } from "@/lib/tracks";
+import { TRACKS, trackName, resolveTrackId } from "@/lib/tracks";
 import {
   LAP_OPTIONS,
   MAX_PLAYER_OPTIONS,
+  type GridSlot,
   type PresenceMeta,
   type RaceSettings,
   type Role,
@@ -106,7 +107,8 @@ export function Lobby({
         onPresence: setMembers,
         onMessage: (msg: RoomMessage) => {
           if (msg.kind === "settings") setSettings(msg.settings);
-          else if (msg.kind === "start") router.push(`/r/${code}/race`);
+          else if (msg.kind === "start")
+            router.push(`/r/${code}/race?track=${msg.trackId}&laps=${msg.laps}`);
         },
       },
     );
@@ -151,6 +153,20 @@ export function Lobby({
 
   const players = members.filter((m) => m.role === "player");
   const canStart = players.length >= 1 && players.every((p) => p.ready && p.carId);
+
+  const startRace = () => {
+    const resolved = resolveTrackId(settings.trackId);
+    const grid: GridSlot[] = players.map((p, i) => ({ deviceId: p.deviceId, slot: i }));
+    handleRef.current?.send({
+      kind: "start",
+      trackId: resolved,
+      laps: settings.laps,
+      grid,
+      startAt: Date.now() + 1000,
+    });
+    apiPatch(`/api/rooms/${code}`, { status: "racing" }).catch(() => {});
+    router.push(`/r/${code}/race?track=${resolved}&laps=${settings.laps}`);
+  };
 
   if (!supported) {
     return (
@@ -360,18 +376,15 @@ export function Lobby({
           </section>
         )}
 
-        {/* Start (wired in the race phase) */}
+        {/* Start */}
         {isOwner && (
           <button
             type="button"
-            disabled
-            title="The race scene arrives in the next update"
-            className="relative mx-auto rounded-full bg-emerald-600/50 px-12 py-4 text-lg font-bold text-white/70"
+            onClick={startRace}
+            disabled={!canStart}
+            className="mx-auto rounded-full bg-emerald-600 px-12 py-4 text-lg font-bold text-white shadow-lg transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-emerald-600/40 disabled:text-white/60"
           >
             Start race
-            <span className="absolute -right-2 -top-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-black">
-              soon
-            </span>
           </button>
         )}
         {!isOwner && (
