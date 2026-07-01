@@ -86,6 +86,13 @@ export function applyDoodleStyle(root: THREE.Object3D, opts: DoodleStyleOptions 
   } = opts;
   const grad = getToonGradientMap();
 
+  // Outline thickness is a WORLD-space measure. Because normalizeOrientation rescales the
+  // GLB (Tripo exports arbitrary intrinsic units), we must convert the world thickness into
+  // each mesh's local units — otherwise the outline is thick/thin depending on the source
+  // model's scale. Ensure world matrices reflect the current (normalized) transform first.
+  root.updateWorldMatrix(true, true);
+  const worldScale = new THREE.Vector3();
+
   // Collect first so we don't traverse into the outline children we add below.
   const meshes: THREE.Mesh[] = [];
   root.traverse((child) => {
@@ -115,8 +122,13 @@ export function applyDoodleStyle(root: THREE.Object3D, opts: DoodleStyleOptions 
       : new THREE.MeshToonMaterial({ ...base, gradientMap: grad });
 
     if (outline) {
+      // World thickness -> local geometry units for this mesh's cumulative scale.
+      mesh.getWorldScale(worldScale);
+      const avgScale =
+        (Math.abs(worldScale.x) + Math.abs(worldScale.y) + Math.abs(worldScale.z)) / 3 || 1;
+      const localThickness = outlineThickness / avgScale;
       const outlineMesh = new THREE.Mesh(
-        inflateGeometry(mesh.geometry, outlineThickness),
+        inflateGeometry(mesh.geometry, localThickness),
         new THREE.MeshBasicMaterial({ color: outlineColor, side: THREE.BackSide }),
       );
       outlineMesh.userData.__doodleOutline = true;
