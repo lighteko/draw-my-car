@@ -13,8 +13,16 @@ import {
 } from "@/lib/rig";
 import { applyDoodleStyle } from "@/lib/doodle";
 import { getTrack, GATE_TRIGGER_RADIUS, type Gate, type TrackDef } from "@/lib/tracks";
+import type { Quat, Standing, Vec3n } from "@/lib/roomTypes";
 import { VehicleRig } from "./VehicleRig";
 import { RaceHud, type RaceResult } from "./RaceHud";
+import { RemoteVehicle, type Snapshot } from "./RemoteVehicle";
+
+export interface RemoteRacer {
+  deviceId: string;
+  glbUrl: string | null;
+  spawnIndex: number;
+}
 
 /**
  * RaceScene — a single-player race on a gate track. Client-only (WebGL).
@@ -39,12 +47,32 @@ export function RaceScene({
   laps,
   spawnIndex = 0,
   onExit,
+  remotes = [],
+  remoteBuffers,
+  onTransform,
+  onProgress,
+  onFinished,
+  standings = [],
+  selfDeviceId,
 }: {
   trackId: string;
   carGlbUrl: string | null;
   laps: number;
   spawnIndex?: number;
   onExit?: () => void;
+  /** Other racers to render as interpolated ghosts. */
+  remotes?: RemoteRacer[];
+  /** Per-device pose buffers, filled by the page from "transform" messages. */
+  remoteBuffers?: RefObject<Map<string, Snapshot[]>>;
+  /** Broadcast the local car pose (~20 Hz). */
+  onTransform?: (p: Vec3n, q: Quat) => void;
+  /** Report own lap progress to the owner for ranking. */
+  onProgress?: (lap: number, nextGate: number) => void;
+  onFinished?: (totalMs: number) => void;
+  /** Owner-authoritative leaderboard for the HUD. */
+  standings?: Standing[];
+  /** Highlights the local player in the leaderboard. */
+  selfDeviceId?: string;
 }) {
   const track = useMemo(() => getTrack(trackId), [trackId]);
   const spawn = track.spawns[spawnIndex % track.spawns.length];
@@ -89,14 +117,17 @@ export function RaceScene({
       setLap(p.lap);
       setLapTimes([...p.lapTimes]);
       setNextGate(p.nextGate);
+      onProgress?.(p.lap, p.nextGate);
       if (p.lap >= laps) {
         const totalMs = p.lapTimes.reduce((a, b) => a + b, 0);
         setResult({ totalMs, lapTimes: [...p.lapTimes] });
         setPhase("finished");
+        onFinished?.(totalMs);
       }
     } else {
       p.nextGate = (p.nextGate + 1) % total;
       setNextGate(p.nextGate);
+      onProgress?.(p.lap, p.nextGate);
     }
   };
 
@@ -137,6 +168,17 @@ export function RaceScene({
             progress={progress}
             onGatePass={onGatePass}
           />
+
+          {onTransform && <TransformBroadcaster bodyRef={chassisRef} onTransform={onTransform} />}
+
+          {remotes.map((r) => (
+            <RemoteVehicle
+              key={r.deviceId}
+              glbUrl={r.glbUrl}
+              spawn={track.spawns[r.spawnIndex % track.spawns.length]}
+              getBuffer={() => remoteBuffers?.current?.get(r.deviceId)}
+            />
+          ))}
         </Physics>
 
         <ChaseCamera target={chassisRef} />
@@ -151,6 +193,8 @@ export function RaceScene({
         running={phase === "racing"}
         lapTimes={lapTimes}
         result={result}
+        standings={standings}
+        selfDeviceId={selfDeviceId}
         onExit={onExit}
       />
     </div>
@@ -353,6 +397,28 @@ function LapTracker({
     if (dx * dx + dz * dz <= GATE_TRIGGER_RADIUS * GATE_TRIGGER_RADIUS) {
       onGatePass();
     }
+  });
+  return null;
+}
+
+/** Broadcasts the local car pose at ~20 Hz for remote ghosts. */
+function TransformBroadcaster({
+  bodyRef,
+  onTransform,
+}: {
+  bodyRef: RefObject<RapierRigidBody | null>;
+  onTransform: (p: Vec3n, q: Quat) => void;
+}) {
+  const acc = useRef(0);
+  useFrame((_, dt) => {
+    acc.current += dt;
+    if (acc.current < 0.05) return;
+    acc.current = 0;
+    const body = bodyRef.current;
+    if (!body) return;
+    const t = body.translation();
+    const r = body.rotation();
+    onTransform([t.x, t.y, t.z], [r.x, r.y, r.z, r.w]);
   });
   return null;
 }

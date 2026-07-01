@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { Standing } from "@/lib/roomTypes";
 
 /**
- * RaceHud — DOM overlay for the race (countdown, lap/timer, results). Sibling of the
- * Canvas so its per-tick re-renders never touch the WebGL tree.
+ * RaceHud — DOM overlay for the race (countdown, lap/timer, leaderboard, results).
+ * Sibling of the Canvas so its per-tick re-renders never touch the WebGL tree.
  */
 
 export interface RaceResult {
@@ -31,6 +32,8 @@ export function RaceHud({
   running,
   lapTimes,
   result,
+  standings = [],
+  selfDeviceId,
   onExit,
 }: {
   phase: Phase;
@@ -41,6 +44,8 @@ export function RaceHud({
   running: boolean;
   lapTimes: number[];
   result: RaceResult | null;
+  standings?: Standing[];
+  selfDeviceId?: string;
   onExit?: () => void;
 }) {
   // Refresh the running clock (~12 fps is plenty for a timer readout). performance.now()
@@ -85,6 +90,31 @@ export function RaceHud({
         </div>
       )}
 
+      {/* Leaderboard (multiplayer) */}
+      {standings.length > 1 && phase !== "countdown" && (
+        <div className="pointer-events-none absolute left-4 top-16 z-10 w-56 rounded-lg bg-black/45 p-2 font-mono text-xs text-white backdrop-blur">
+          <div className="mb-1 px-1 text-[10px] uppercase tracking-wide text-neutral-400">
+            Standings
+          </div>
+          <ol className="flex flex-col gap-0.5">
+            {standings.map((s, i) => (
+              <li
+                key={s.deviceId}
+                className={`flex items-center gap-2 rounded px-1 py-0.5 ${
+                  s.deviceId === selfDeviceId ? "bg-emerald-500/25" : ""
+                }`}
+              >
+                <span className="w-4 text-right text-neutral-400">{i + 1}</span>
+                <span className="flex-1 truncate">{s.username}</span>
+                <span className="text-neutral-400">
+                  {s.finished ? "🏁" : `L${Math.min(s.lap + 1, totalLaps)}`}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
       {/* Countdown */}
       {phase === "countdown" && (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
@@ -99,6 +129,12 @@ export function RaceHud({
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-neutral-900 p-6 text-white shadow-2xl">
             <h2 className="mb-1 text-center text-2xl font-bold">Finished! 🏁</h2>
+            {standings.length > 1 && selfDeviceId && (
+              <div className="mb-2 text-center text-lg font-semibold text-amber-300">
+                P{Math.max(1, standings.findIndex((s) => s.deviceId === selfDeviceId) + 1)} of{" "}
+                {standings.length}
+              </div>
+            )}
             <div className="mb-4 text-center font-mono text-3xl font-black text-emerald-400">
               {formatMs(result.totalMs)}
             </div>

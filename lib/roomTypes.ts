@@ -43,6 +43,28 @@ export interface GridSlot {
   slot: number;
 }
 
+export type Vec3n = [number, number, number];
+export type Quat = [number, number, number, number];
+
+/** A row in the live leaderboard, ranked by the owner. */
+export interface Standing {
+  deviceId: string;
+  username: string;
+  carName: string | null;
+  lap: number;
+  /** lap * gateCount + gate progress — a monotonic distance for ranking. */
+  progress: number;
+  finished: boolean;
+  totalMs: number | null;
+}
+
 export type RoomMessage =
   | { kind: "settings"; settings: RaceSettings }
-  | { kind: "start"; trackId: string; laps: number; grid: GridSlot[]; startAt: number };
+  | { kind: "start"; trackId: string; laps: number; grid: GridSlot[]; startAt: number }
+  // High-frequency car pose (kept out of React state; buffered + interpolated).
+  | { kind: "transform"; deviceId: string; p: Vec3n; q: Quat }
+  // A player's own lap progress, reported to the owner for ranking.
+  | { kind: "progress"; deviceId: string; lap: number; nextGate: number }
+  | { kind: "finished"; deviceId: string; totalMs: number }
+  // Owner-authoritative leaderboard, rebroadcast to everyone.
+  | { kind: "standings"; entries: Standing[] };
