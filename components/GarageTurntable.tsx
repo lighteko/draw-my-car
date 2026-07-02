@@ -1,19 +1,18 @@
 "use client";
 
-import { Suspense, useMemo, useRef } from "react";
-import type { ReactNode } from "react";
+import { Suspense, useMemo } from "react";
 import * as THREE from "three";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { ContactShadows, useGLTF } from "@react-three/drei";
+import { Canvas } from "@react-three/fiber";
+import { ContactShadows, OrbitControls, useGLTF } from "@react-three/drei";
 import { normalizeOrientation } from "@/lib/rig";
 import { applyDoodleStyle } from "@/lib/doodle";
 
 /**
- * GarageTurntable — a slowly rotating platform showing the selected car.
+ * GarageTurntable — a showroom platform showing the selected car.
  *
- * Client-only (WebGL). Reuses the same look as the driving scene: normalizeOrientation
- * for pose/scale and applyDoodleStyle for the toon + outline treatment. When no car is
- * selected the platform spins empty; the "+" prompt is a DOM overlay drawn by the page.
+ * Client-only (WebGL). The camera auto-orbits and the player can drag to spin it manually
+ * (azimuth only; zoom/pan locked), resuming auto-rotate after. Reuses the driving-scene
+ * look: normalizeOrientation for pose/scale and applyDoodleStyle for the toon + outline.
  */
 export function GarageTurntable({ glbUrl }: { glbUrl: string | null }) {
   return (
@@ -41,27 +40,31 @@ export function GarageTurntable({ glbUrl }: { glbUrl: string | null }) {
       <pointLight position={[-4, 3.5, -5]} intensity={40} color="#22d3ee" distance={22} decay={2} />
       <pointLight position={[5, 2, -4]} intensity={22} color="#f59e0b" distance={18} decay={2} />
 
-      <Turntable>
+      <group>
         <Platform />
         {glbUrl && (
           <Suspense fallback={null}>
             <TurntableCar url={glbUrl} />
           </Suspense>
         )}
-      </Turntable>
+      </group>
 
       <ContactShadows position={[0, 0.01, 0]} opacity={0.5} scale={12} blur={2.2} far={6} />
+
+      <OrbitControls
+        makeDefault
+        enablePan={false}
+        enableZoom={false}
+        enableDamping
+        dampingFactor={0.12}
+        autoRotate
+        autoRotateSpeed={0.9}
+        target={[0, 0.6, 0]}
+        minPolarAngle={Math.PI / 2.55}
+        maxPolarAngle={Math.PI / 2.05}
+      />
     </Canvas>
   );
-}
-
-/** Rotates its children about +Y for the "showroom" spin. */
-function Turntable({ children }: { children: ReactNode }) {
-  const ref = useRef<THREE.Group>(null);
-  useFrame((_, dt) => {
-    if (ref.current) ref.current.rotation.y += dt * 0.35;
-  });
-  return <group ref={ref}>{children}</group>;
 }
 
 function Platform() {
