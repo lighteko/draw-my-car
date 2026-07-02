@@ -85,10 +85,8 @@ function Scene({
   );
 }
 
-interface JobStatus {
-  status: "pending" | "processing" | "ready" | "failed";
-  carUrl: string | null;
-  error?: string | null;
+interface CarResponse {
+  car: { glbUrl: string | null } | null;
 }
 
 function GeneratedVehicle({
@@ -106,14 +104,13 @@ function GeneratedVehicle({
 
     async function resolveCar() {
       try {
-        const res = await fetch(`/api/jobs/${encodeURIComponent(carId)}`, {
+        const res = await fetch(`/api/cars/${encodeURIComponent(carId)}`, {
           signal: controller.signal,
         });
         if (!res.ok) throw new Error(`failed to resolve car (${res.status})`);
-        const status = (await res.json()) as JobStatus;
-        if (status.status === "failed") throw new Error(status.error ?? "generation failed");
-        if (status.status !== "ready" || !status.carUrl) throw new Error("car is not ready yet");
-        setCarUrl(status.carUrl);
+        const data = (await res.json()) as CarResponse;
+        if (!data.car?.glbUrl) throw new Error("car has no model");
+        setCarUrl(data.car.glbUrl);
       } catch (e) {
         if (!controller.signal.aborted) {
           setError(e instanceof Error ? e.message : "failed to load car");

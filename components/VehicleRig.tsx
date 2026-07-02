@@ -22,8 +22,6 @@ import { getToonGradientMap, OUTLINE_COLOR, outlineScaleFor } from "@/lib/doodle
  * meshes or a generated GLB passed through `visual`.
  */
 
-export type ControlName = "forward" | "back" | "left" | "right" | "brake" | "reset";
-
 const ENGINE_FORCE = 800;
 const REVERSE_FORCE = 450;
 const BRAKE_FORCE = 8;
@@ -46,17 +44,26 @@ export function VehicleRig({
   bodyRef,
   visual,
   position = [0, 1.2, 0],
+  rotationY = 0,
+  enabled = true,
+  anchorRef,
 }: {
   rig: RigSpec;
   bodyRef: RefObject<RapierRigidBody | null>;
   visual?: ReactNode;
   position?: [number, number, number];
+  /** Spawn heading (yaw, radians). Also restored on reset. */
+  rotationY?: number;
+  /** When false, the car is held braked at the line (e.g. during the countdown). */
+  enabled?: boolean;
+  /** Optional anchor inside the interpolated rigid body — follow this for a jitter-free camera. */
+  anchorRef?: RefObject<THREE.Object3D | null>;
 }) {
   const { world } = useRapier();
   const controllerRef = useRef<DynamicRayCastVehicleController | null>(null);
   const wheelRefs = useRef<(THREE.Group | null)[]>([]);
   const steerRef = useRef(0);
-  const getKeys = useDriveControls();
+  const getInput = useDriveControls();
 
   const alignQuat = useMemo(
     () => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2),
@@ -112,24 +119,28 @@ export function VehicleRig({
     const chassis = bodyRef.current;
     if (!controller || !chassis) return;
 
-    const keys = getKeys();
+    const input = getInput();
     const dt = world.timestep;
 
-    if (keys.reset) {
+    if (input.reset) {
+      const half = rotationY / 2;
       chassis.setTranslation({ x: position[0], y: position[1], z: position[2] }, true);
-      chassis.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      chassis.setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }, true);
       chassis.setLinvel({ x: 0, y: 0, z: 0 }, true);
       chassis.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
 
     let engine = 0;
-    if (keys.forward) engine = ENGINE_FORCE;
-    else if (keys.back) engine = -REVERSE_FORCE;
-    const brake = keys.brake ? BRAKE_FORCE : 0;
-
+    let brake = input.brake ? BRAKE_FORCE : 0;
     let steerTarget = 0;
-    if (keys.left) steerTarget += MAX_STEER;
-    if (keys.right) steerTarget -= MAX_STEER;
+    if (enabled) {
+      // Analog throttle: forward scales engine force, reverse scales reverse force.
+      engine = input.throttle >= 0 ? input.throttle * ENGINE_FORCE : input.throttle * REVERSE_FORCE;
+      steerTarget = input.steer * MAX_STEER;
+    } else {
+      // Held at the grid during the countdown.
+      brake = BRAKE_FORCE;
+    }
     steerRef.current = THREE.MathUtils.damp(steerRef.current, steerTarget, STEER_DAMP, dt);
 
     rig.wheels.forEach((w, i) => {
@@ -166,12 +177,14 @@ export function VehicleRig({
     <RigidBody
       ref={bodyRef}
       position={position}
+      rotation={[0, rotationY, 0]}
       colliders={false}
       canSleep={false}
       ccd
       type="dynamic"
     >
       <CuboidCollider args={[hx, hy, hz]} mass={rig.chassisMass} />
+      {anchorRef ? <object3D ref={anchorRef} /> : null}
 
       {visual ?? (
         <>

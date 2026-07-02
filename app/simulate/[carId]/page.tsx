@@ -16,7 +16,7 @@ export default async function SimulatePage({
   const { carId } = await params;
 
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-neutral-900">
+    <main className="relative h-dvh w-full overflow-hidden bg-neutral-900">
       <SimulatorClient carId={carId} />
 
       <Link

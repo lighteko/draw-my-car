@@ -1,13 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { MultiviewImages } from "@/lib/providers";
+import { getServiceClient, hasSupabase } from "@/lib/supabase";
 
 /**
- * db.ts - local job records.
+ * db.ts - generation job records.
  *
- * This project is local-only for now, so persistence is a small JSON-backed store
- * instead of Supabase/Postgres. The public function signatures stay synchronous
- * so the route seams do not need to change.
+ * When Supabase is configured the jobs live in the `jobs` table (the full Job object in a
+ * jsonb `data` column — we only ever look it up by id). Otherwise we fall back to a small
+ * JSON-backed store under .data/ so the app still runs in bare local dev. The public API
+ * is async either way.
  */
 
 export type JobStatus = "pending" | "processing" | "review" | "ready" | "failed";
@@ -45,6 +47,75 @@ export interface Job {
   updatedAt: number;
 }
 
+function newId(): string {
+  return `job_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+}
+
+function buildJob(init: Partial<Job>): Job {
+  const now = Date.now();
+  return {
+    id: init.id ?? newId(),
+    status: init.status ?? "pending",
+    taskId: init.taskId,
+    stage: init.stage,
+    inputKey: init.inputKey,
+    multiviewTaskId: init.multiviewTaskId,
+    modelTaskId: init.modelTaskId,
+    multiview: init.multiview,
+    render: init.render,
+    carId: init.carId,
+    carUrl: init.carUrl,
+    error: init.error,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Supabase-backed store
+// ---------------------------------------------------------------------------
+
+async function sbCreate(init: Partial<Job>): Promise<Job> {
+  const job = buildJob(init);
+  const { error } = await getServiceClient()
+    .from("jobs")
+    .insert({ id: job.id, data: job, updated_at: new Date(job.updatedAt).toISOString() });
+  if (error) throw new Error(`failed to create job: ${error.message}`);
+  return job;
+}
+
+async function sbGet(jobId: string): Promise<Job | undefined> {
+  const { data, error } = await getServiceClient()
+    .from("jobs")
+    .select("data")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (error) throw new Error(`failed to read job: ${error.message}`);
+  return (data?.data as Job | undefined) ?? undefined;
+}
+
+async function sbUpdate(jobId: string, patch: Partial<Job>): Promise<Job | undefined> {
+  const existing = await sbGet(jobId);
+  if (!existing) return undefined;
+  const updated: Job = {
+    ...existing,
+    ...patch,
+    id: existing.id,
+    createdAt: existing.createdAt,
+    updatedAt: Date.now(),
+  };
+  const { error } = await getServiceClient()
+    .from("jobs")
+    .update({ data: updated, updated_at: new Date(updated.updatedAt).toISOString() })
+    .eq("id", jobId);
+  if (error) throw new Error(`failed to update job: ${error.message}`);
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
+// Local file store (fallback when Supabase is not configured)
+// ---------------------------------------------------------------------------
+
 const DATA_DIR = path.resolve(
   /* turbopackIgnore: true */ process.cwd(),
   process.env.LOCAL_DATA_DIR ?? ".data",
@@ -67,17 +138,13 @@ function isJob(value: unknown): value is Job {
 
 // Always read the latest from disk. In Next.js the create route (/api/jobs) and the
 // status route (/api/jobs/[id]) can run as separate module instances, so a cached
-// in-memory map diverges between them — a job created by one becomes invisible to the
-// other ("job not found"). The JSON file (written atomically) is the source of truth.
+// in-memory map diverges between them. The JSON file (written atomically) is the source
+// of truth.
 function loadJobs(): Map<string, Job> {
   if (!existsSync(DB_PATH)) return new Map();
-
   const raw = readFileSync(DB_PATH, "utf8");
   const parsed = JSON.parse(raw) as unknown;
-  const entries = Array.isArray(parsed)
-    ? parsed.filter((entry): entry is Job => isJob(entry))
-    : [];
-
+  const entries = Array.isArray(parsed) ? parsed.filter((entry): entry is Job => isJob(entry)) : [];
   return new Map(entries.map((job) => [job.id, job]));
 }
 
@@ -88,43 +155,22 @@ function persistJobs(store: Map<string, Job>): void {
   renameSync(TMP_PATH, DB_PATH);
 }
 
-function newId(): string {
-  return `job_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
-}
-
-export function createJob(init: Partial<Job> = {}): Job {
-  const now = Date.now();
-  const job: Job = {
-    id: init.id ?? newId(),
-    status: init.status ?? "pending",
-    taskId: init.taskId,
-    stage: init.stage,
-    inputKey: init.inputKey,
-    multiviewTaskId: init.multiviewTaskId,
-    modelTaskId: init.modelTaskId,
-    multiview: init.multiview,
-    render: init.render,
-    carId: init.carId,
-    carUrl: init.carUrl,
-    error: init.error,
-    createdAt: now,
-    updatedAt: now,
-  };
+function localCreate(init: Partial<Job>): Job {
+  const job = buildJob(init);
   const store = loadJobs();
   store.set(job.id, job);
   persistJobs(store);
   return job;
 }
 
-export function getJob(jobId: string): Job | undefined {
+function localGet(jobId: string): Job | undefined {
   return loadJobs().get(jobId);
 }
 
-export function updateJob(jobId: string, patch: Partial<Job>): Job | undefined {
+function localUpdate(jobId: string, patch: Partial<Job>): Job | undefined {
   const store = loadJobs();
   const existing = store.get(jobId);
   if (!existing) return undefined;
-
   const updated: Job = {
     ...existing,
     ...patch,
@@ -135,4 +181,20 @@ export function updateJob(jobId: string, patch: Partial<Job>): Job | undefined {
   store.set(jobId, updated);
   persistJobs(store);
   return updated;
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export async function createJob(init: Partial<Job> = {}): Promise<Job> {
+  return hasSupabase() ? sbCreate(init) : localCreate(init);
+}
+
+export async function getJob(jobId: string): Promise<Job | undefined> {
+  return hasSupabase() ? sbGet(jobId) : localGet(jobId);
+}
+
+export async function updateJob(jobId: string, patch: Partial<Job>): Promise<Job | undefined> {
+  return hasSupabase() ? sbUpdate(jobId, patch) : localUpdate(jobId, patch);
 }

@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #07070c;
+  --foreground: #f4f7fa;
+  --accent: #22d3ee; /* electric cyan */
+  --accent-2: #f59e0b; /* energy amber */
 }
 
 @theme inline {
@@ -10,17 +12,195 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-rajdhani);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  overscroll-behavior: none; /* no rubber-band scroll on mobile */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---- Game chrome ---------------------------------------------------------- */
+
+/* Layered radial glows + vignette for a showroom backdrop. */
+.game-bg {
+  background:
+    radial-gradient(1100px 620px at 50% -12%, rgba(34, 211, 238, 0.18), transparent 60%),
+    radial-gradient(820px 520px at 108% 118%, rgba(245, 158, 11, 0.12), transparent 60%),
+    linear-gradient(180deg, #0b1120 0%, #07070c 58%, #050507 100%);
+}
+
+.font-heading {
+  font-family: var(--font-heading), var(--font-geist-sans), sans-serif;
+}
+
+/* Chromed neon title. */
+.neon-title {
+  font-family: var(--font-heading), var(--font-geist-sans), sans-serif;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 0.01em;
+  background: linear-gradient(180deg, #ffffff 0%, #bdeefb 55%, #22d3ee 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 14px rgba(34, 211, 238, 0.35));
+}
+
+/* Primary CTA — glowing gradient race button. */
+.btn-race {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-family: var(--font-heading), sans-serif;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #04131b;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(180deg, #7df0ff 0%, #22d3ee 55%, #06b6d4 100%);
+  box-shadow:
+    0 10px 34px rgba(34, 211, 238, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition:
+    filter 0.12s ease,
+    box-shadow 0.12s ease,
+    transform 0.1s ease;
+}
+.btn-race:hover {
+  filter: brightness(1.08);
+  box-shadow:
+    0 12px 44px rgba(34, 211, 238, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.btn-race:active {
+  transform: translateY(1px) scale(0.99);
+}
+.btn-race:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.65) brightness(0.7);
+  box-shadow: none;
+}
+
+/* Secondary ghost button. */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  font-family: var(--font-heading), sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #e8f1f5;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(8px);
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.1s ease;
+}
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(34, 211, 238, 0.5);
+}
+.btn-ghost:active {
+  transform: translateY(1px);
+}
+.btn-ghost:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* Frosted dark panel. */
+.game-panel {
+  background: linear-gradient(180deg, rgba(19, 24, 38, 0.86), rgba(9, 12, 20, 0.86));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(14px);
+}
+
+/* Safe-area aware padding for full-screen game surfaces. */
+.safe-t {
+  padding-top: max(1.1rem, env(safe-area-inset-top));
+}
+.safe-b {
+  padding-bottom: max(1.4rem, env(safe-area-inset-bottom));
+}
+.safe-x {
+  padding-left: max(1.1rem, env(safe-area-inset-left));
+  padding-right: max(1.1rem, env(safe-area-inset-right));
+}
+
+/* ---- Animations ----------------------------------------------------------- */
+
+/* Living-loading-art: a sweeping sheen over the generated render while the 3D builds. */
+@keyframes dmc-shimmer {
+  0% {
+    transform: translateX(-130%) skewX(-12deg);
+  }
+  100% {
+    transform: translateX(230%) skewX(-12deg);
+  }
+}
+.dmc-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.dmc-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 65%
+  );
+  transform: translateX(-130%) skewX(-12deg);
+  animation: dmc-shimmer 1.9s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes dmc-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-10px) rotate(1deg);
+  }
+}
+.dmc-float {
+  animation: dmc-float 4s ease-in-out infinite;
+}
+
+@keyframes dmc-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.dmc-rise {
+  animation: dmc-rise 0.4s ease-out both;
 }
