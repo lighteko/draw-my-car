@@ -43,8 +43,27 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
   });
 
   let current = initial;
+  let subscribed = false;
+  let tracking = false;
+
+  // Presence updates can be triggered back-to-back (pick car, then ready up).
+  // Serialize channel.track calls so an older request cannot finish last and
+  // overwrite newer state. If state changes in flight, immediately send the latest.
+  const syncPresence = async (): Promise<void> => {
+    if (!subscribed || tracking) return;
+    tracking = true;
+    const snapshot = current;
+    try {
+      await channel.track(snapshot);
+    } finally {
+      tracking = false;
+      if (subscribed && current !== snapshot) void syncPresence();
+    }
+  };
+
   channel.subscribe((status) => {
-    if (status === "SUBSCRIBED") void channel.track(current);
+    subscribed = status === "SUBSCRIBED";
+    if (subscribed) void syncPresence();
   });
 
   return {
@@ -53,9 +72,10 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
     },
     updatePresence(meta) {
       current = meta;
-      void channel.track(meta);
+      void syncPresence();
     },
     leave() {
+      subscribed = false;
       void supabase.removeChannel(channel);
     },
   };

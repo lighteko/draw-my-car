@@ -99,6 +99,20 @@ export function Lobby({
     [deviceId, username, role, carId, carName, isReady],
   );
 
+  // Render and validate this device from local state immediately instead of
+  // waiting for its presence update to make a round trip through Realtime.
+  const visibleMembers = useMemo(() => {
+    if (!deviceId) return members;
+    let includesSelf = false;
+    const next = members.map((member) => {
+      if (member.deviceId !== deviceId) return member;
+      includesSelf = true;
+      return myMeta;
+    });
+    if (!includesSelf && ready) next.push(myMeta);
+    return next;
+  }, [deviceId, members, myMeta, ready]);
+
   // Join the room channel once identity is ready (re-join only on identity/code change).
   useEffect(() => {
     if (!ready || !supported || !deviceId) return;
@@ -159,7 +173,7 @@ export function Lobby({
     });
   }, [joinUrl]);
 
-  const players = members.filter((m) => m.role === "player");
+  const players = visibleMembers.filter((m) => m.role === "player");
   const canStart = players.length >= 1 && players.every((p) => p.ready && p.carId);
 
   const startRace = async () => {
@@ -197,7 +211,7 @@ export function Lobby({
             </div>
             <div className="flex items-baseline gap-3">
               <h1 className="text-3xl font-bold tracking-widest">{code.toUpperCase()}</h1>
-              <span className="text-sm text-neutral-400">{members.length} in room</span>
+              <span className="text-sm text-neutral-400">{visibleMembers.length} in room</span>
             </div>
           </div>
           <Link href="/" className="rounded-lg border border-white/20 px-4 py-2 text-sm hover:bg-white/10">
@@ -212,10 +226,10 @@ export function Lobby({
               Players
             </h2>
             <ul className="flex flex-col gap-2">
-              {members.length === 0 && (
+              {visibleMembers.length === 0 && (
                 <li className="text-sm text-neutral-500">Waiting for players…</li>
               )}
-              {members.map((m) => (
+              {visibleMembers.map((m) => (
                 <li
                   key={m.deviceId}
                   className="flex items-center gap-3 rounded-lg bg-black/30 px-3 py-2.5"
