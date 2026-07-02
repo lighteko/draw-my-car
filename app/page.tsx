@@ -80,7 +80,7 @@ export default function Home() {
   }, [router]);
 
   return (
-    <main className="game-bg relative h-dvh w-full overflow-hidden text-white">
+    <main className="garage-page game-bg relative h-dvh w-full overflow-hidden text-white">
       <div className="absolute inset-0">
         <GarageTurntable glbUrl={selected?.glbUrl ?? null} />
       </div>
@@ -90,12 +90,12 @@ export default function Home() {
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-black/90 via-black/45 to-transparent" />
 
       {/* Top HUD */}
-      <header className="safe-t safe-x absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-3">
+      <header className="garage-header safe-t safe-x absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-3">
         <div>
           <div className="neon-title text-2xl leading-none sm:text-3xl">
             DRAW<span className="not-italic text-cyan-300"> &amp; </span>DRIVE
           </div>
-          <div className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.35em] text-cyan-400/70">
+          <div className="garage-kicker mt-0.5 font-mono text-[10px] uppercase tracking-[0.35em] text-cyan-400/70">
             Garage
           </div>
         </div>
@@ -110,7 +110,7 @@ export default function Home() {
       {/* Empty state */}
       {cars !== null && count === 0 && (
         <div className="absolute inset-0 z-10 flex items-center justify-center px-6">
-          <div className="game-panel dmc-rise flex max-w-sm flex-col items-center gap-4 rounded-3xl p-8 text-center">
+          <div className="garage-empty game-panel dmc-rise flex max-w-sm flex-col items-center gap-4 rounded-3xl p-8 text-center">
             <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-b from-cyan-300 to-cyan-600 text-4xl font-light leading-none text-[#04131b] shadow-[0_0_30px_rgba(34,211,238,0.5)]">
               +
             </span>
@@ -129,14 +129,14 @@ export default function Home() {
 
       {/* Left car-info panel (desktop) */}
       {selected && (
-        <aside className="safe-x pointer-events-none absolute left-0 top-24 z-10 hidden md:block">
+        <aside className="garage-info safe-x pointer-events-none absolute left-0 top-24 z-10 hidden md:block">
           <CarInfoPanel car={selected} />
         </aside>
       )}
 
       {/* Car-select sidebar: right column on desktop, bottom strip on mobile */}
       {cars !== null && count > 0 && (
-        <div className="absolute bottom-32 inset-x-0 z-10 flex gap-2 overflow-x-auto px-4 md:inset-x-auto md:right-3 md:top-24 md:bottom-36 md:w-24 md:flex-col md:overflow-x-hidden md:overflow-y-auto md:px-0">
+        <div className="garage-car-selector absolute bottom-32 inset-x-0 z-10 flex gap-2 overflow-x-auto px-4 md:inset-x-auto md:right-3 md:top-24 md:bottom-36 md:w-24 md:flex-col md:overflow-x-hidden md:overflow-y-auto md:px-0">
           {cars.map((car, i) => (
             <CarThumb key={car.id} car={car} active={i === Math.min(index, count - 1)} onClick={() => setIndex(i)} />
           ))}
@@ -144,7 +144,7 @@ export default function Home() {
             type="button"
             onClick={() => setModalOpen(true)}
             aria-label="Add car"
-            className="flex aspect-square w-20 shrink-0 items-center justify-center rounded-xl border border-dashed border-white/25 text-2xl text-white/60 transition hover:border-cyan-400/60 hover:text-white md:w-full"
+            className="garage-car-thumb flex aspect-square w-20 shrink-0 items-center justify-center rounded-xl border border-dashed border-white/25 text-2xl text-white/60 transition hover:border-cyan-400/60 hover:text-white md:w-full"
           >
             +
           </button>
@@ -153,8 +153,8 @@ export default function Home() {
 
       {/* Bottom action cluster */}
       {selected && (
-        <div className="safe-b safe-x absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-3 pb-2">
-          <div className="font-heading text-xl font-bold uppercase italic tracking-wide md:hidden">
+        <div className="garage-actions safe-b safe-x absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-3 pb-2">
+          <div className="garage-car-name font-heading text-xl font-bold uppercase italic tracking-wide md:hidden">
             {selected.name ?? "Untitled"}
           </div>
           <button
@@ -237,7 +237,7 @@ function CarThumb({ car, active, onClick }: { car: Car; active: boolean; onClick
       type="button"
       onClick={onClick}
       aria-label={car.name ?? "car"}
-      className={`aspect-square w-20 shrink-0 overflow-hidden rounded-xl border bg-black/40 transition md:w-full ${
+      className={`garage-car-thumb aspect-square w-20 shrink-0 overflow-hidden rounded-xl border bg-black/40 transition md:w-full ${
         active ? "border-cyan-400 ring-2 ring-cyan-400/40" : "border-white/15 hover:border-white/40"
       }`}
     >
@@ -301,8 +301,8 @@ function NicknameModal({
   const [name, setName] = useState(current);
   const trimmed = name.trim();
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="game-panel dmc-rise w-full max-w-sm rounded-2xl p-6">
+    <div className="nickname-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="nickname-dialog game-panel dmc-rise w-full max-w-sm rounded-2xl p-6">
         <h2 className="font-heading text-xl font-bold uppercase tracking-wide">Driver name</h2>
         <p className="mt-1 text-sm text-white/55">This is how other racers see you.</p>
         <input

@@ -9,6 +9,7 @@ import { Physics, RigidBody, CuboidCollider, type RapierRigidBody } from "@react
 import { deriveRigFromObject, getPlaceholderRig, normalizeOrientation, type RigSpec } from "@/lib/rig";
 import { VehicleRig } from "./VehicleRig";
 import { Hud } from "./Hud";
+import { TouchControls } from "./TouchControls";
 
 /**
  * Simulator — the client-only R3F + Rapier driving scene.
@@ -34,7 +35,8 @@ export default function Simulator({ carId }: { carId: string }) {
 
       {/* DOM overlays (outside the Canvas) */}
       <Hud bodyRef={chassisRef} />
-      <div className="pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full bg-black/45 px-4 py-1.5 font-mono text-xs text-white backdrop-blur">
+      <TouchControls />
+      <div className="sim-car-label pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full bg-black/45 px-4 py-1.5 font-mono text-xs text-white backdrop-blur">
         car: {carId}
       </div>
     </div>

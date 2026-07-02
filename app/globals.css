@@ -204,3 +204,474 @@ body {
 .dmc-rise {
   animation: dmc-rise 0.4s ease-out both;
 }
+
+/* ---- Touch driving controls --------------------------------------------- */
+
+.touch-steering {
+  left: max(1rem, env(safe-area-inset-left));
+  bottom: max(1.25rem, env(safe-area-inset-bottom));
+}
+
+.touch-pedals {
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(1.25rem, env(safe-area-inset-bottom));
+}
+
+.touch-tools {
+  bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+@media (pointer: coarse) {
+  .sim-help {
+    display: none;
+  }
+
+  .sim-speed {
+    right: max(1rem, env(safe-area-inset-right));
+    bottom: auto;
+    top: max(1rem, env(safe-area-inset-top));
+  }
+}
+
+/* Phone landscape needs a height-aware layout. Width-only breakpoints make a
+   phone look like a cramped desktop as soon as it rotates past 768px. */
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 1024px) {
+  .safe-t {
+    padding-top: max(0.65rem, env(safe-area-inset-top));
+  }
+
+  .safe-b {
+    padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
+  }
+
+  .safe-x {
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+  }
+
+  /* Garage */
+  .garage-header .neon-title {
+    font-size: 1.35rem;
+  }
+
+  .garage-kicker {
+    display: none;
+  }
+
+  .garage-header .game-panel {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+  }
+
+  .garage-header .game-panel > span:first-child {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  .garage-info {
+    display: none;
+  }
+
+  .garage-car-selector {
+    inset-inline: auto;
+    right: max(0.65rem, env(safe-area-inset-right));
+    top: max(3.75rem, calc(env(safe-area-inset-top) + 3.25rem));
+    bottom: max(0.65rem, env(safe-area-inset-bottom));
+    width: 3.75rem;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 0.15rem;
+  }
+
+  .garage-car-thumb {
+    width: 3.4rem;
+    border-radius: 0.65rem;
+  }
+
+  .garage-actions {
+    inset-inline: auto;
+    left: max(0.75rem, env(safe-area-inset-left));
+    right: auto;
+    bottom: max(0.65rem, env(safe-area-inset-bottom));
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0;
+  }
+
+  .garage-car-name {
+    display: none;
+  }
+
+  .garage-actions .btn-race {
+    width: auto;
+    max-width: none;
+    padding: 0.7rem 1.5rem;
+    font-size: 0.9rem;
+  }
+
+  .garage-actions .btn-ghost {
+    padding: 0.65rem 1rem;
+    font-size: 0.75rem;
+  }
+
+  .garage-empty {
+    display: grid;
+    width: min(42rem, calc(100vw - 3rem));
+    max-width: none;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: 0.25rem 1rem;
+    padding: 1rem 1.25rem;
+    border-radius: 1.25rem;
+    text-align: left;
+  }
+
+  .garage-empty > span:first-child {
+    grid-row: 1 / 3;
+    width: 3rem;
+    height: 3rem;
+    font-size: 1.75rem;
+  }
+
+  .garage-empty h2 {
+    align-self: end;
+    font-size: 1.15rem;
+  }
+
+  .garage-empty p {
+    align-self: start;
+    font-size: 0.75rem;
+  }
+
+  .garage-empty .btn-race {
+    grid-column: 3;
+    grid-row: 1 / 3;
+    align-self: center;
+    margin: 0;
+    padding: 0.7rem 1rem;
+    font-size: 0.8rem;
+  }
+
+  /* Drawing and name dialogs */
+  .create-car-backdrop,
+  .nickname-backdrop {
+    padding:
+      max(0.5rem, env(safe-area-inset-top))
+      max(0.75rem, env(safe-area-inset-right))
+      max(0.5rem, env(safe-area-inset-bottom))
+      max(0.75rem, env(safe-area-inset-left));
+  }
+
+  .create-car-dialog {
+    max-width: 56rem;
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .create-car-header,
+  .create-car-footer {
+    flex: none;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .create-car-body {
+    padding: 0.65rem;
+  }
+
+  .draw-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(10rem, 13rem);
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .draw-surface {
+    display: flex;
+    justify-content: center;
+  }
+
+  .draw-surface canvas {
+    width: auto;
+    height: min(52vw, calc(100dvh - 8.75rem));
+    max-width: 100%;
+  }
+
+  .draw-tools {
+    margin-top: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.45rem;
+    font-size: 0.75rem;
+  }
+
+  .draw-tools label {
+    justify-content: space-between;
+  }
+
+  .draw-tools input[type="range"] {
+    min-width: 0;
+    width: 6rem;
+  }
+
+  .draw-status {
+    margin-left: 0;
+    text-align: center;
+  }
+
+  .create-car-working {
+    min-height: 0;
+    flex-direction: row;
+    justify-content: center;
+    gap: 1.5rem;
+    padding: 0;
+  }
+
+  .create-car-preview {
+    width: auto;
+    height: min(54dvh, 12rem);
+  }
+
+  .create-car-copy {
+    max-width: 20rem;
+    text-align: left;
+  }
+
+  .nickname-dialog {
+    max-width: 32rem;
+    padding: 1rem;
+  }
+
+  .nickname-dialog input {
+    margin-top: 0.75rem;
+  }
+
+  .nickname-dialog > div:last-child {
+    margin-top: 0.75rem;
+  }
+
+  /* Lobby */
+  .lobby-shell {
+    max-width: 75rem;
+    gap: 0.75rem;
+    padding:
+      max(0.65rem, env(safe-area-inset-top))
+      max(0.75rem, env(safe-area-inset-right))
+      max(0.75rem, env(safe-area-inset-bottom))
+      max(0.75rem, env(safe-area-inset-left));
+  }
+
+  .lobby-header h1 {
+    font-size: 1.5rem;
+  }
+
+  .lobby-header a {
+    padding: 0.45rem 0.75rem;
+  }
+
+  .lobby-main-grid {
+    grid-template-columns: minmax(15rem, 1fr) minmax(15rem, 0.9fr);
+    gap: 0.75rem;
+  }
+
+  .lobby-side {
+    gap: 0.75rem;
+  }
+
+  .lobby-roster,
+  .lobby-share,
+  .lobby-setup,
+  .lobby-settings {
+    padding: 0.75rem;
+    border-radius: 0.9rem;
+  }
+
+  .lobby-roster h2,
+  .lobby-share h2,
+  .lobby-setup h2,
+  .lobby-settings h2 {
+    margin-bottom: 0.5rem;
+  }
+
+  .lobby-share {
+    display: grid;
+    grid-template-columns: 4.75rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .lobby-share h2 {
+    grid-column: 1 / -1;
+  }
+
+  .lobby-qr {
+    width: 4.75rem;
+    margin: 0;
+  }
+
+  .lobby-settings .mb-5 {
+    margin-bottom: 0.75rem;
+  }
+
+  .lobby-settings .grid {
+    gap: 0.75rem;
+  }
+
+  .lobby-start {
+    padding: 0.7rem 2rem;
+    font-size: 0.9rem;
+  }
+
+  /* Driving and race overlays */
+  .touch-steering,
+  .touch-pedals {
+    bottom: max(0.7rem, env(safe-area-inset-bottom));
+    gap: 0.55rem;
+  }
+
+  .touch-steering {
+    left: max(0.7rem, env(safe-area-inset-left));
+  }
+
+  .touch-pedals {
+    right: max(0.7rem, env(safe-area-inset-right));
+  }
+
+  .touch-tools {
+    bottom: max(0.35rem, env(safe-area-inset-bottom));
+    gap: 0.4rem;
+  }
+
+  .touch-tools button {
+    padding: 0.45rem 0.75rem;
+  }
+
+  .touch-hold {
+    width: 4.5rem;
+    height: 4.5rem;
+    font-size: 1.8rem;
+  }
+
+  .sim-exit,
+  .race-exit {
+    left: max(0.7rem, env(safe-area-inset-left));
+    top: max(0.7rem, env(safe-area-inset-top));
+  }
+
+  .sim-car-label,
+  .race-spectator {
+    top: max(0.7rem, env(safe-area-inset-top));
+  }
+
+  .sim-speed {
+    right: max(0.7rem, env(safe-area-inset-right));
+    bottom: auto;
+    top: max(0.7rem, env(safe-area-inset-top));
+    padding: 0.4rem 0.75rem;
+  }
+
+  .sim-speed > span:first-child {
+    font-size: 1.75rem;
+  }
+
+  .race-metrics {
+    right: max(0.7rem, env(safe-area-inset-right));
+    top: max(0.7rem, env(safe-area-inset-top));
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .race-metrics > div {
+    padding: 0.35rem 0.55rem;
+    font-size: 0.75rem;
+  }
+
+  .race-standings {
+    left: max(0.7rem, env(safe-area-inset-left));
+    top: max(3.25rem, calc(env(safe-area-inset-top) + 2.75rem));
+    width: 11rem;
+    max-height: calc(100dvh - 9rem);
+    overflow: hidden;
+  }
+
+  .race-minimap {
+    right: max(0.7rem, env(safe-area-inset-right));
+    top: max(3.25rem, calc(env(safe-area-inset-top) + 2.75rem));
+  }
+
+  .race-minimap svg {
+    width: 6.5rem;
+    height: 6.5rem;
+  }
+
+  .race-countdown > div {
+    font-size: 4.5rem;
+  }
+
+  .race-results-backdrop {
+    padding:
+      max(0.5rem, env(safe-area-inset-top))
+      max(0.75rem, env(safe-area-inset-right))
+      max(0.5rem, env(safe-area-inset-bottom))
+      max(0.75rem, env(safe-area-inset-left));
+  }
+
+  .race-results-card {
+    max-width: 34rem;
+    max-height: calc(100dvh - 1rem);
+    overflow-y: auto;
+    padding: 0.9rem 1.25rem;
+  }
+
+  .race-results-card h2 {
+    font-size: 1.25rem;
+  }
+
+  .race-results-card > div:last-of-type {
+    margin-bottom: 0.65rem;
+    font-size: 1.75rem;
+  }
+
+  .race-results-laps {
+    max-height: 4.5rem;
+    margin-bottom: 0.75rem;
+    overflow-y: auto;
+  }
+
+  .landscape-notice {
+    gap: 0.65rem;
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+}
+
+@media (orientation: landscape) and (max-height: 400px) and (max-width: 700px) {
+  .garage-header .game-panel > span:nth-child(n + 2) {
+    display: none;
+  }
+
+  .garage-empty p {
+    display: none;
+  }
+
+  .garage-empty {
+    grid-template-rows: auto;
+  }
+
+  .garage-empty > span:first-child,
+  .garage-empty .btn-race {
+    grid-row: 1;
+  }
+
+  .draw-workspace {
+    grid-template-columns: minmax(0, 1fr) 10rem;
+  }
+
+  .lobby-qr {
+    display: none;
+  }
+
+  .lobby-share {
+    display: block;
+  }
+}

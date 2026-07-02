@@ -119,8 +119,8 @@ export function DrawCanvas({
   };
 
   return (
-    <div className={className}>
-      <div className="overflow-hidden rounded-xl border border-black/10 bg-white shadow-sm dark:border-white/15">
+    <div className={`draw-workspace ${className ?? ""}`}>
+      <div className="draw-surface overflow-hidden rounded-xl border border-black/10 bg-white shadow-sm dark:border-white/15">
         <canvas
           ref={canvasRef}
           width={WIDTH}
@@ -133,7 +133,7 @@ export function DrawCanvas({
         />
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+      <div className="draw-tools mt-3 flex flex-wrap items-center gap-3 text-sm">
         <button
           type="button"
           onClick={clear}
@@ -158,7 +158,7 @@ export function DrawCanvas({
           />
         </label>
 
-        <span className="ml-auto text-xs text-neutral-400">
+        <span className="draw-status ml-auto text-xs text-neutral-400">
           {hasContent ? "ready to generate" : "draw or upload a car"}
         </span>
       </div>

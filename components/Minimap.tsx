@@ -73,7 +73,7 @@ export function Minimap({
   }, [project, selfBody, remoteBuffers]);
 
   return (
-    <div className="pointer-events-none absolute right-4 top-24 z-10 rounded-lg bg-black/40 p-1 backdrop-blur">
+    <div className="race-minimap pointer-events-none absolute right-4 top-24 z-10 rounded-lg bg-black/40 p-1 backdrop-blur">
       <svg width={SIZE} height={SIZE} className="block">
         <polygon
           points={gatePath}

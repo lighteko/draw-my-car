@@ -71,21 +71,21 @@ export function RaceHud({
         <button
           type="button"
           onClick={onExit}
-          className="absolute left-4 top-4 z-10 rounded-md bg-black/45 px-3 py-1.5 font-mono text-xs text-white backdrop-blur transition hover:bg-black/65"
+          className="race-exit absolute left-4 top-4 z-10 rounded-md bg-black/45 px-3 py-1.5 font-mono text-xs text-white backdrop-blur transition hover:bg-black/65"
         >
           ← exit
         </button>
       )}
 
       {spectator && (
-        <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full bg-black/45 px-4 py-1.5 font-mono text-xs text-white backdrop-blur">
+        <div className="race-spectator pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full bg-black/45 px-4 py-1.5 font-mono text-xs text-white backdrop-blur">
           Spectating
         </div>
       )}
 
       {/* Lap + timer */}
       {!spectator && phase !== "countdown" && (
-        <div className="pointer-events-none absolute right-4 top-4 z-10 flex flex-col items-end gap-1 font-mono text-white">
+        <div className="race-metrics pointer-events-none absolute right-4 top-4 z-10 flex flex-col items-end gap-1 font-mono text-white">
           <div className="rounded-md bg-black/45 px-3 py-1.5 text-sm backdrop-blur">
             Lap {Math.min(lap + (phase === "finished" ? 0 : 1), totalLaps)} / {totalLaps}
           </div>
@@ -102,7 +102,7 @@ export function RaceHud({
 
       {/* Leaderboard (multiplayer) */}
       {standings.length > 1 && phase !== "countdown" && (
-        <div className="pointer-events-none absolute left-4 top-16 z-10 w-56 rounded-lg bg-black/45 p-2 font-mono text-xs text-white backdrop-blur">
+        <div className="race-standings pointer-events-none absolute left-4 top-16 z-10 w-56 rounded-lg bg-black/45 p-2 font-mono text-xs text-white backdrop-blur">
           <div className="mb-1 px-1 text-[10px] uppercase tracking-wide text-neutral-400">
             Standings
           </div>
@@ -127,7 +127,7 @@ export function RaceHud({
 
       {/* Countdown */}
       {phase === "countdown" && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+        <div className="race-countdown pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
           <div className="text-8xl font-black text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.6)]">
             {countdown > 0 ? countdown : "GO!"}
           </div>
@@ -136,8 +136,8 @@ export function RaceHud({
 
       {/* Results */}
       {!spectator && phase === "finished" && result && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-neutral-900 p-6 text-white shadow-2xl">
+        <div className="race-results-backdrop absolute inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="race-results-card w-full max-w-sm rounded-2xl border border-white/10 bg-neutral-900 p-6 text-white shadow-2xl">
             <h2 className="mb-1 text-center text-2xl font-bold">Finished! 🏁</h2>
             {standings.length > 1 && selfDeviceId && (
               <div className="mb-2 text-center text-lg font-semibold text-amber-300">
@@ -148,7 +148,7 @@ export function RaceHud({
             <div className="mb-4 text-center font-mono text-3xl font-black text-emerald-400">
               {formatMs(result.totalMs)}
             </div>
-            <ul className="mb-5 flex flex-col gap-1 font-mono text-sm">
+            <ul className="race-results-laps mb-5 flex flex-col gap-1 font-mono text-sm">
               {result.lapTimes.map((t, i) => (
                 <li key={i} className="flex justify-between text-neutral-300">
                   <span>Lap {i + 1}</span>

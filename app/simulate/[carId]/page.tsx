@@ -21,7 +21,7 @@ export default async function SimulatePage({
 
       <Link
         href="/"
-        className="absolute left-4 top-4 z-10 rounded-md bg-black/45 px-3 py-1.5 font-mono text-xs text-white backdrop-blur transition hover:bg-black/65"
+        className="sim-exit absolute left-4 top-4 z-30 rounded-md bg-black/45 px-3 py-1.5 font-mono text-xs text-white backdrop-blur transition hover:bg-black/65"
       >
         ← back
       </Link>

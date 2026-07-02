@@ -33,7 +33,7 @@ export function Hud({ bodyRef }: { bodyRef: RefObject<RapierRigidBody | null> })
   return (
     <div className="pointer-events-none absolute inset-0 select-none">
       {/* Speedometer */}
-      <div className="absolute bottom-6 right-6 flex items-baseline gap-2 rounded-xl bg-black/55 px-5 py-3 font-mono text-white backdrop-blur">
+      <div className="sim-speed absolute bottom-6 right-6 flex items-baseline gap-2 rounded-xl bg-black/55 px-5 py-3 font-mono text-white backdrop-blur">
         <span ref={speedEl} className="text-4xl font-bold tabular-nums">
           0
         </span>
@@ -41,7 +41,7 @@ export function Hud({ bodyRef }: { bodyRef: RefObject<RapierRigidBody | null> })
       </div>
 
       {/* Controls help */}
-      <div className="absolute bottom-6 left-6 rounded-xl bg-black/55 px-4 py-3 font-mono text-xs leading-relaxed text-white backdrop-blur">
+      <div className="sim-help absolute bottom-6 left-6 rounded-xl bg-black/55 px-4 py-3 font-mono text-xs leading-relaxed text-white backdrop-blur">
         <div className="mb-1 font-semibold uppercase tracking-wide opacity-70">
           Controls
         </div>

@@ -110,9 +110,9 @@ export function CreateCarModal({
   const working = phase === "working";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="game-panel relative flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl text-white">
-        <header className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+    <div className="create-car-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="create-car-dialog game-panel relative flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl text-white">
+        <header className="create-car-header flex items-center justify-between border-b border-white/10 px-5 py-4">
           <h2 className="font-heading text-lg font-bold uppercase tracking-wide">
             {phase === "draw" ? "Draw your car" : "Building your car"}
           </h2>
@@ -128,7 +128,7 @@ export function CreateCarModal({
           )}
         </header>
 
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="create-car-body flex-1 overflow-y-auto p-5">
           {phase === "draw" && (
             <>
               <DrawCanvas onChange={(dataUrl) => (image.current = dataUrl)} />
@@ -137,25 +137,25 @@ export function CreateCarModal({
           )}
 
           {working && (
-            <div className="flex flex-col items-center gap-6 py-4">
-              <div className="dmc-float">
+            <div className="create-car-working flex flex-col items-center gap-6 py-4">
+              <div className="create-car-art dmc-float">
                 <div className="dmc-shimmer rounded-xl border border-white/10 bg-white/5">
                   {renderUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={renderUrl}
                       alt="your car coming to life"
-                      className="aspect-square w-64 rounded-xl object-contain"
+                      className="create-car-preview aspect-square w-64 rounded-xl object-contain"
                     />
                   ) : (
-                    <div className="flex aspect-square w-64 items-center justify-center">
+                    <div className="create-car-preview flex aspect-square w-64 items-center justify-center">
                       <Spinner />
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="w-full max-w-sm text-center">
+              <div className="create-car-copy w-full max-w-sm text-center">
                 <p className="text-base font-medium">{STAGES[stage]}</p>
                 <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                   <div
@@ -185,7 +185,7 @@ export function CreateCarModal({
         </div>
 
         {phase === "draw" && (
-          <footer className="flex items-center justify-end gap-3 border-t border-white/10 px-5 py-4">
+          <footer className="create-car-footer flex items-center justify-end gap-3 border-t border-white/10 px-5 py-4">
             <button
               type="button"
               onClick={onClose}

@@ -186,10 +186,10 @@ export function Lobby({
   }
 
   return (
-    <main className="game-bg min-h-dvh w-full text-white">
-      <div className="mx-auto flex max-w-5xl flex-col gap-6 px-5 py-6">
+    <main className="lobby-page game-bg min-h-dvh w-full text-white">
+      <div className="lobby-shell mx-auto flex max-w-5xl flex-col gap-6 px-5 py-6">
         {/* Header */}
-        <header className="flex items-center justify-between">
+        <header className="lobby-header flex items-center justify-between">
           <div>
             <div className="font-mono text-xs uppercase tracking-widest text-cyan-400">
               Race lobby
@@ -204,9 +204,9 @@ export function Lobby({
           </Link>
         </header>
 
-        <div className="grid gap-6 md:grid-cols-[1fr_20rem]">
+        <div className="lobby-main-grid grid gap-6 md:grid-cols-[1fr_20rem]">
           {/* Roster */}
-          <section className="game-panel rounded-2xl p-5">
+          <section className="lobby-roster game-panel rounded-2xl p-5">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-neutral-400">
               Players
             </h2>
@@ -250,15 +250,15 @@ export function Lobby({
           </section>
 
           {/* Side column */}
-          <div className="flex flex-col gap-6">
+          <div className="lobby-side flex flex-col gap-6">
             {/* Share */}
-            <section className="game-panel rounded-2xl p-5">
+            <section className="lobby-share game-panel rounded-2xl p-5">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-400">
                 Invite
               </h2>
               {qr && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={qr} alt="Scan to join" className="mx-auto mb-3 rounded-lg bg-white p-1" />
+                <img src={qr} alt="Scan to join" className="lobby-qr mx-auto mb-3 rounded-lg bg-white p-1" />
               )}
               <button
                 type="button"
@@ -270,7 +270,7 @@ export function Lobby({
             </section>
 
             {/* Your setup */}
-            <section className="game-panel rounded-2xl p-5">
+            <section className="lobby-setup game-panel rounded-2xl p-5">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-400">
                 You
               </h2>
@@ -325,7 +325,7 @@ export function Lobby({
 
         {/* Owner: race settings */}
         {isOwner && (
-          <section className="game-panel rounded-2xl p-5">
+          <section className="lobby-settings game-panel rounded-2xl p-5">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-neutral-400">
               Race settings
             </h2>
@@ -391,7 +391,7 @@ export function Lobby({
             type="button"
             onClick={startRace}
             disabled={!canStart}
-            className="btn-race mx-auto px-12 py-4 text-lg"
+            className="lobby-start btn-race mx-auto px-12 py-4 text-lg"
           >
             Start race
           </button>

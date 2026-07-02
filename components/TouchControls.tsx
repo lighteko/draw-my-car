@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { resetTouchInput, setTiltEnabled, setTiltSteer, setTouchInput } from "@/lib/driveInput";
 
 /**
@@ -17,18 +17,6 @@ import { resetTouchInput, setTiltEnabled, setTiltSteer, setTouchInput } from "@/
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
-
-const leftDock: CSSProperties = {
-  left: "max(1rem, env(safe-area-inset-left))",
-  bottom: "max(1.25rem, env(safe-area-inset-bottom))",
-};
-const rightDock: CSSProperties = {
-  right: "max(1rem, env(safe-area-inset-right))",
-  bottom: "max(1.25rem, env(safe-area-inset-bottom))",
-};
-const centerDock: CSSProperties = {
-  bottom: "max(0.5rem, env(safe-area-inset-bottom))",
-};
 
 export function TouchControls() {
   const [isTouch] = useState(
@@ -96,10 +84,10 @@ export function TouchControls() {
   if (!isTouch) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-20 select-none">
+    <div className="touch-controls pointer-events-none absolute inset-0 z-20 select-none">
       {/* Steering (GUI only) */}
       {scheme === "gui" && (
-        <div className="absolute flex gap-3" style={leftDock}>
+        <div className="touch-steering absolute flex gap-3">
           <HoldButton
             label="Steer left"
             onHold={() => setTouchInput({ steer: 1 })}
@@ -118,7 +106,7 @@ export function TouchControls() {
       )}
 
       {/* Pedals */}
-      <div className="absolute flex items-end gap-3" style={rightDock}>
+      <div className="touch-pedals absolute flex items-end gap-3">
         <HoldButton
           label="Reverse"
           onHold={() => setTouchInput({ throttle: -1 })}
@@ -137,7 +125,7 @@ export function TouchControls() {
       </div>
 
       {/* Scheme toggle + reset + recenter */}
-      <div className="absolute left-1/2 flex -translate-x-1/2 gap-2" style={centerDock}>
+      <div className="touch-tools absolute left-1/2 flex -translate-x-1/2 gap-2">
         <PillButton onClick={toggleScheme}>{scheme === "gui" ? "Tilt: off" : "Tilt: on"}</PillButton>
         {scheme === "tilt" && (
           <PillButton onClick={() => (neutralRef.current = null)}>Recenter</PillButton>
@@ -193,7 +181,7 @@ function HoldButton({
       }}
       onPointerUp={onRelease}
       onPointerCancel={onRelease}
-      className={`pointer-events-auto flex h-[5.5rem] w-[5.5rem] touch-none items-center justify-center rounded-full border text-4xl leading-none backdrop-blur transition active:brightness-125 ${
+      className={`touch-hold pointer-events-auto flex h-[5.5rem] w-[5.5rem] touch-none items-center justify-center rounded-full border text-4xl leading-none backdrop-blur transition active:brightness-125 ${
         accent
           ? "border-cyan-300/60 bg-cyan-500/30 text-cyan-100 shadow-[0_0_24px_rgba(34,211,238,0.4)]"
           : "border-white/20 bg-white/12 text-white/90"
