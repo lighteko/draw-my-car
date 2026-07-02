@@ -10,7 +10,7 @@ export const RaceSceneClient = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-screen w-screen items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
+      <div className="flex h-dvh w-full items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
         Loading race…
       </div>
     ),

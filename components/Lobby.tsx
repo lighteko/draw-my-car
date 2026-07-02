@@ -176,19 +176,19 @@ export function Lobby({
 
   if (!supported) {
     return (
-      <main className="flex h-screen items-center justify-center bg-neutral-900 text-white">
+      <main className="game-bg flex h-dvh items-center justify-center text-white">
         Multiplayer isn&apos;t configured in this build.
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen w-screen bg-gradient-to-b from-neutral-800 to-black text-white">
+    <main className="game-bg min-h-dvh w-full text-white">
       <div className="mx-auto flex max-w-5xl flex-col gap-6 px-5 py-6">
         {/* Header */}
         <header className="flex items-center justify-between">
           <div>
-            <div className="font-mono text-xs uppercase tracking-widest text-emerald-400">
+            <div className="font-mono text-xs uppercase tracking-widest text-cyan-400">
               Race lobby
             </div>
             <div className="flex items-baseline gap-3">
@@ -203,7 +203,7 @@ export function Lobby({
 
         <div className="grid gap-6 md:grid-cols-[1fr_20rem]">
           {/* Roster */}
-          <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+          <section className="game-panel rounded-2xl p-5">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-neutral-400">
               Players
             </h2>
@@ -221,7 +221,7 @@ export function Lobby({
                       m.role === "spectator"
                         ? "bg-neutral-500"
                         : m.ready
-                          ? "bg-emerald-400"
+                          ? "bg-cyan-400"
                           : "bg-amber-400"
                     }`}
                   />
@@ -249,7 +249,7 @@ export function Lobby({
           {/* Side column */}
           <div className="flex flex-col gap-6">
             {/* Share */}
-            <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+            <section className="game-panel rounded-2xl p-5">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-400">
                 Invite
               </h2>
@@ -260,14 +260,14 @@ export function Lobby({
               <button
                 type="button"
                 onClick={copyLink}
-                className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold transition hover:bg-emerald-500"
+                className="w-full rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-semibold transition hover:bg-cyan-500"
               >
                 {copied ? "Copied!" : "Copy invite link"}
               </button>
             </section>
 
             {/* Your setup */}
-            <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+            <section className="game-panel rounded-2xl p-5">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-400">
                 You
               </h2>
@@ -283,7 +283,7 @@ export function Lobby({
               {role === "player" && (
                 <>
                   {cars.length === 0 ? (
-                    <Link href="/" className="block text-sm text-emerald-400 underline">
+                    <Link href="/" className="block text-sm text-cyan-400 underline">
                       You have no cars yet — make one in the garage
                     </Link>
                   ) : (
@@ -295,7 +295,7 @@ export function Lobby({
                           onClick={() => pickCar(c.id)}
                           className={`whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm ${
                             carId === c.id
-                              ? "border-emerald-400 bg-emerald-500/20"
+                              ? "border-cyan-400 bg-cyan-500/20"
                               : "border-white/15 hover:bg-white/10"
                           }`}
                         >
@@ -309,7 +309,7 @@ export function Lobby({
                     disabled={!carId}
                     onClick={() => setIsReady((r) => !r)}
                     className={`w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                      isReady ? "bg-emerald-600 hover:bg-emerald-500" : "bg-white/10 hover:bg-white/20"
+                      isReady ? "bg-cyan-600 hover:bg-cyan-500" : "bg-white/10 hover:bg-white/20"
                     }`}
                   >
                     {isReady ? "Ready ✓" : "Ready up"}
@@ -322,7 +322,7 @@ export function Lobby({
 
         {/* Owner: race settings */}
         {isOwner && (
-          <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+          <section className="game-panel rounded-2xl p-5">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-neutral-400">
               Race settings
             </h2>
@@ -388,7 +388,7 @@ export function Lobby({
             type="button"
             onClick={startRace}
             disabled={!canStart}
-            className="mx-auto rounded-full bg-emerald-600 px-12 py-4 text-lg font-bold text-white shadow-lg transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-emerald-600/40 disabled:text-white/60"
+            className="btn-race mx-auto px-12 py-4 text-lg"
           >
             Start race
           </button>
@@ -427,7 +427,7 @@ function RoleButton({
       type="button"
       onClick={onClick}
       className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition ${
-        active ? "bg-emerald-600" : "bg-white/10 hover:bg-white/20"
+        active ? "bg-cyan-600" : "bg-white/10 hover:bg-white/20"
       }`}
     >
       {children}
@@ -452,7 +452,7 @@ function Chip({
       onClick={onClick}
       title={title}
       className={`rounded-lg border px-3 py-1.5 text-sm transition ${
-        active ? "border-emerald-400 bg-emerald-500/20" : "border-white/15 hover:bg-white/10"
+        active ? "border-cyan-400 bg-cyan-500/20" : "border-white/15 hover:bg-white/10"
       }`}
     >
       {children}

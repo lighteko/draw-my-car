@@ -111,9 +111,9 @@ export function CreateCarModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="relative flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-neutral-900 text-white shadow-2xl">
+      <div className="game-panel relative flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl text-white">
         <header className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-          <h2 className="text-lg font-semibold">
+          <h2 className="font-heading text-lg font-bold uppercase tracking-wide">
             {phase === "draw" ? "Draw your car" : "Building your car"}
           </h2>
           {!working && (
@@ -159,7 +159,7 @@ export function CreateCarModal({
                 <p className="text-base font-medium">{STAGES[stage]}</p>
                 <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                   <div
-                    className="h-full rounded-full bg-emerald-500 transition-all duration-700"
+                    className="h-full rounded-full bg-cyan-500 transition-all duration-700"
                     style={{ width: `${Math.round((progress ?? 0.08) * 100)}%` }}
                   />
                 </div>
@@ -193,11 +193,7 @@ export function CreateCarModal({
             >
               Cancel
             </button>
-            <button
-              type="button"
-              onClick={generate}
-              className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500"
-            >
+            <button type="button" onClick={generate} className="btn-race px-6 py-2.5 text-sm">
               Bring it to life
             </button>
           </footer>
@@ -209,6 +205,6 @@ export function CreateCarModal({
 
 function Spinner() {
   return (
-    <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-emerald-400" />
+    <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-cyan-400" />
   );
 }

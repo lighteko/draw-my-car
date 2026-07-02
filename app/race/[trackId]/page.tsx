@@ -11,7 +11,7 @@ const ACTIVE_CAR_KEY = "dmc_active_car";
 
 function Preparing() {
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
+    <div className="flex h-dvh w-full items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
       Preparing race…
     </div>
   );
@@ -60,7 +60,7 @@ function Practice() {
 
   if (!config) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
+      <div className="flex h-dvh w-full items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
         Preparing race…
       </div>
     );

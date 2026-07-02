@@ -73,7 +73,7 @@ export default function RoomRacePage() {
   return (
     <Suspense
       fallback={
-        <div className="flex h-screen w-screen items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
+        <div className="flex h-dvh w-full items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
           Lining up on the grid…
         </div>
       }
@@ -273,7 +273,7 @@ function RoomRace() {
 
   if (!config || (!config.spectator && spawnIndex == null)) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
+      <div className="flex h-dvh w-full items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
         Lining up on the grid…
       </div>
     );

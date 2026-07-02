@@ -142,7 +142,7 @@ export function RaceScene({
   };
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-neutral-900">
+    <div className="relative h-dvh w-full overflow-hidden bg-neutral-900">
       <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 6, -12], fov: 60 }}>
         <color attach="background" args={[track.skyColor]} />
         <fog attach="fog" args={[track.skyColor, 80, 260]} />

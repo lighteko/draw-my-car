@@ -23,12 +23,12 @@ export function GarageTurntable({ glbUrl }: { glbUrl: string | null }) {
       gl={{ alpha: true, antialias: true }}
       camera={{ position: [0, 2.4, 6.2], fov: 40 }}
     >
-      <ambientLight intensity={0.7} />
-      <hemisphereLight intensity={0.4} groundColor="#2a2a33" />
+      <ambientLight intensity={0.55} />
+      <hemisphereLight intensity={0.35} groundColor="#1a1a22" />
       <directionalLight
         castShadow
         position={[6, 10, 6]}
-        intensity={2.2}
+        intensity={2.4}
         shadow-mapSize={[1024, 1024]}
         shadow-camera-near={1}
         shadow-camera-far={40}
@@ -37,6 +37,9 @@ export function GarageTurntable({ glbUrl }: { glbUrl: string | null }) {
         shadow-camera-top={8}
         shadow-camera-bottom={-8}
       />
+      {/* Cool rim light from behind for the showroom look. */}
+      <pointLight position={[-4, 3.5, -5]} intensity={40} color="#22d3ee" distance={22} decay={2} />
+      <pointLight position={[5, 2, -4]} intensity={22} color="#f59e0b" distance={18} decay={2} />
 
       <Turntable>
         <Platform />
@@ -63,10 +66,21 @@ function Turntable({ children }: { children: ReactNode }) {
 
 function Platform() {
   return (
-    <mesh receiveShadow position={[0, -0.15, 0]}>
-      <cylinderGeometry args={[3, 3.2, 0.3, 64]} />
-      <meshStandardMaterial color="#1f2430" roughness={0.85} metalness={0.1} />
-    </mesh>
+    <group>
+      <mesh receiveShadow position={[0, -0.15, 0]}>
+        <cylinderGeometry args={[3, 3.25, 0.3, 72]} />
+        <meshStandardMaterial color="#141821" roughness={0.7} metalness={0.25} />
+      </mesh>
+      {/* Glowing accent rim (unlit so it reads as a light line). */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+        <torusGeometry args={[3, 0.035, 8, 90]} />
+        <meshBasicMaterial color="#22d3ee" toneMapped={false} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
+        <ringGeometry args={[2.4, 2.95, 72]} />
+        <meshBasicMaterial color="#0e7490" transparent opacity={0.25} toneMapped={false} />
+      </mesh>
+    </group>
   );
 }
 

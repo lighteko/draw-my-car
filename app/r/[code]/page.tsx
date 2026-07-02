@@ -31,13 +31,10 @@ export default async function RoomPage({ params }: { params: Promise<{ code: str
 
 function Notice({ title, body }: { title: string; body: string }) {
   return (
-    <main className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-neutral-900 px-6 text-center text-white">
-      <h1 className="text-2xl font-bold">{title}</h1>
-      <p className="max-w-md text-neutral-400">{body}</p>
-      <Link
-        href="/"
-        className="rounded-lg bg-emerald-600 px-5 py-2.5 font-semibold text-white transition hover:bg-emerald-500"
-      >
+    <main className="game-bg flex h-dvh w-full flex-col items-center justify-center gap-4 px-6 text-center text-white">
+      <h1 className="font-heading text-2xl font-bold uppercase tracking-wide">{title}</h1>
+      <p className="max-w-md text-white/60">{body}</p>
+      <Link href="/" className="btn-race px-6 py-3">
         Back to garage
       </Link>
     </main>

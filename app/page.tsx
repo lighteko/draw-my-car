@@ -11,8 +11,8 @@ import type { Car } from "@/lib/cars";
 import { CreateCarModal } from "@/components/CreateCarModal";
 
 /**
- * Home = the garage. A rotating turntable of the device's cars with a Play button.
- * The turntable is WebGL, so it's dynamic-imported client-only (ssr: false).
+ * Home = the garage menu. A rotating hero car with a big PLAY action, styled like a
+ * console racing game's main screen. The turntable is WebGL (dynamic, ssr:false).
  */
 const GarageTurntable = dynamic(
   () => import("@/components/GarageTurntable").then((m) => m.GarageTurntable),
@@ -48,7 +48,6 @@ export default function Home() {
   const count = cars?.length ?? 0;
   const selected = cars && cars.length > 0 ? cars[Math.min(index, cars.length - 1)] : null;
 
-  // Remember the active car for the (next-phase) racing flow.
   useEffect(() => {
     if (selected) window.localStorage.setItem(ACTIVE_CAR_KEY, selected.id);
   }, [selected]);
@@ -79,116 +78,143 @@ export default function Home() {
   }, [router]);
 
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-gradient-to-b from-neutral-700 via-neutral-900 to-black text-white">
+    <main className="game-bg relative h-dvh w-full overflow-hidden text-white">
       <div className="absolute inset-0">
         <GarageTurntable glbUrl={selected?.glbUrl ?? null} />
       </div>
 
+      {/* Legibility vignettes */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-44 bg-gradient-to-b from-black/75 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-black/90 via-black/50 to-transparent" />
+
       {/* Top bar */}
-      <header className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-5">
+      <header className="safe-t safe-x absolute inset-x-0 top-0 flex items-start justify-between">
         <div>
-          <div className="font-mono text-xs uppercase tracking-widest text-emerald-400">
-            Sketch-to-Drive
+          <div className="neon-title text-3xl leading-none sm:text-4xl">
+            DRAW<span className="not-italic text-cyan-300"> &amp; </span>DRIVE
           </div>
-          <div className="text-lg font-bold">Garage</div>
+          <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.35em] text-cyan-400/70">
+            Garage
+          </div>
         </div>
-        {ready && (
-          <div className="pointer-events-auto rounded-full bg-white/10 px-3 py-1.5 text-sm backdrop-blur">
-            {username}
-          </div>
-        )}
+        {ready && <ProfileChip username={username} />}
       </header>
 
       {/* Empty state */}
       {cars !== null && count === 0 && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="pointer-events-auto flex flex-col items-center gap-4 rounded-3xl border-2 border-dashed border-white/25 px-14 py-12 text-center transition hover:border-emerald-400/70 hover:bg-white/5"
-          >
-            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-600 text-4xl font-light leading-none shadow-lg">
+        <div className="absolute inset-0 flex items-center justify-center px-6">
+          <div className="game-panel dmc-rise flex max-w-sm flex-col items-center gap-4 rounded-3xl p-8 text-center">
+            <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-b from-cyan-300 to-cyan-600 text-4xl font-light leading-none text-[#04131b] shadow-[0_0_30px_rgba(34,211,238,0.5)]">
               +
             </span>
-            <span className="text-lg font-semibold">Create your first car</span>
-            <span className="max-w-xs text-sm text-neutral-400">
-              Draw a car and we&apos;ll turn it into a drivable 3D model.
-            </span>
-          </button>
-        </div>
-      )}
-
-      {/* Car name + carousel nav */}
-      {selected && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-28 flex items-center justify-center gap-8">
-          {count > 1 && <NavArrow dir="left" onClick={prev} />}
-          <div className="text-center">
-            <div className="text-xl font-semibold">{selected.name ?? "Untitled car"}</div>
-            <div className="mt-1 text-xs text-neutral-400">
-              {index + 1} / {count}
-            </div>
+            <h2 className="font-heading text-2xl font-bold uppercase tracking-wide">
+              Build your first car
+            </h2>
+            <p className="text-sm text-white/60">
+              Sketch a car and we&apos;ll turn it into a drivable 3D model.
+            </p>
+            <button type="button" onClick={() => setModalOpen(true)} className="btn-race mt-1 px-8 py-3.5 text-base">
+              Draw a car
+            </button>
           </div>
-          {count > 1 && <NavArrow dir="right" onClick={next} />}
         </div>
       )}
 
-      {/* Bottom action bar */}
-      <div className="absolute inset-x-0 bottom-6 flex flex-wrap items-center justify-center gap-3 px-4">
-        {count > 0 && (
+      {/* Bottom menu cluster */}
+      {selected && (
+        <div className="safe-b safe-x absolute inset-x-0 bottom-0 flex flex-col items-center gap-5 pb-2">
+          {/* Nameplate + carousel */}
+          <div className="flex items-center gap-5">
+            {count > 1 && <Chevron dir="left" onClick={prev} />}
+            <div className="min-w-[10rem] text-center">
+              <div className="font-heading text-2xl font-bold uppercase italic tracking-wide sm:text-3xl">
+                {selected.name ?? "Untitled"}
+              </div>
+              <Dots count={count} active={index} />
+            </div>
+            {count > 1 && <Chevron dir="right" onClick={next} />}
+          </div>
+
+          {/* Primary action */}
           <button
             type="button"
-            onClick={() => setModalOpen(true)}
-            className="rounded-full border border-white/20 bg-white/5 px-4 py-3 text-sm font-medium backdrop-blur transition hover:bg-white/10"
+            onClick={play}
+            disabled={!canPlay || creatingRoom}
+            title={
+              count === 0
+                ? "Create a car first"
+                : multiplayer
+                  ? "Create a room and invite friends"
+                  : "Multiplayer needs Supabase configured"
+            }
+            className="btn-race w-64 max-w-[80vw] px-10 py-4 text-lg"
           >
-            + Add car
+            {creatingRoom ? (
+              "Creating…"
+            ) : (
+              <>
+                <span aria-hidden>▶</span> Play
+              </>
+            )}
+            {!multiplayer && (
+              <span className="absolute -right-2 -top-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold not-italic text-black">
+                soon
+              </span>
+            )}
           </button>
-        )}
 
-        <button
-          type="button"
-          onClick={play}
-          disabled={!canPlay || creatingRoom}
-          title={
-            count === 0
-              ? "Create a car first"
-              : multiplayer
-                ? "Create a room and invite friends"
-                : "Multiplayer needs Supabase configured"
-          }
-          className="relative rounded-full bg-emerald-600 px-10 py-3 text-base font-bold text-white shadow-lg transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-emerald-600/40 disabled:text-white/60"
-        >
-          {creatingRoom ? "Creating room…" : "Play"}
-          {!multiplayer && (
-            <span className="absolute -right-2 -top-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-black">
-              soon
-            </span>
-          )}
-        </button>
-
-        {selected && (
-          <Link
-            href={`/race/random?car=${selected.id}`}
-            className="rounded-full border border-white/20 bg-white/5 px-4 py-3 text-sm font-medium backdrop-blur transition hover:bg-white/10"
-          >
-            Practice
-          </Link>
-        )}
-      </div>
-
-      {modalOpen && (
-        <CreateCarModal onClose={() => setModalOpen(false)} onCreated={onCreated} />
+          {/* Secondary actions */}
+          <div className="flex items-center gap-3">
+            <Link href={`/race/random?car=${selected.id}`} className="btn-ghost px-5 py-2.5 text-sm">
+              Practice
+            </Link>
+            <button type="button" onClick={() => setModalOpen(true)} className="btn-ghost px-5 py-2.5 text-sm">
+              + Add car
+            </button>
+          </div>
+        </div>
       )}
+
+      {modalOpen && <CreateCarModal onClose={() => setModalOpen(false)} onCreated={onCreated} />}
     </main>
   );
 }
 
-function NavArrow({ dir, onClick }: { dir: "left" | "right"; onClick: () => void }) {
+function ProfileChip({ username }: { username: string }) {
+  const initial = username.trim().charAt(0).toUpperCase() || "?";
+  return (
+    <div className="game-panel flex items-center gap-2.5 rounded-full py-1.5 pl-1.5 pr-4">
+      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-b from-cyan-300 to-cyan-600 font-heading text-sm font-bold text-[#04131b]">
+        {initial}
+      </span>
+      <span className="max-w-[9rem] truncate text-sm font-medium">{username}</span>
+    </div>
+  );
+}
+
+function Dots({ count, active }: { count: number; active: number }) {
+  if (count <= 1) return null;
+  return (
+    <div className="mt-2 flex items-center justify-center gap-1.5">
+      {Array.from({ length: count }).map((_, i) => (
+        <span
+          key={i}
+          className={`h-1.5 rounded-full transition-all ${
+            i === active ? "w-5 bg-cyan-400" : "w-1.5 bg-white/25"
+          }`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function Chevron({ dir, onClick }: { dir: "left" | "right"; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-white/5 text-xl backdrop-blur transition hover:bg-white/15"
       aria-label={dir === "left" ? "Previous car" : "Next car"}
+      className="flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-white/5 text-2xl text-white/80 backdrop-blur transition hover:border-cyan-400/60 hover:bg-white/10 hover:text-white active:translate-y-px"
     >
       {dir === "left" ? "‹" : "›"}
     </button>
