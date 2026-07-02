@@ -22,8 +22,6 @@ import { getToonGradientMap, OUTLINE_COLOR, outlineScaleFor } from "@/lib/doodle
  * meshes or a generated GLB passed through `visual`.
  */
 
-export type ControlName = "forward" | "back" | "left" | "right" | "brake" | "reset";
-
 const ENGINE_FORCE = 800;
 const REVERSE_FORCE = 450;
 const BRAKE_FORCE = 8;
@@ -62,7 +60,7 @@ export function VehicleRig({
   const controllerRef = useRef<DynamicRayCastVehicleController | null>(null);
   const wheelRefs = useRef<(THREE.Group | null)[]>([]);
   const steerRef = useRef(0);
-  const getKeys = useDriveControls();
+  const getInput = useDriveControls();
 
   const alignQuat = useMemo(
     () => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2),
@@ -118,10 +116,10 @@ export function VehicleRig({
     const chassis = bodyRef.current;
     if (!controller || !chassis) return;
 
-    const keys = getKeys();
+    const input = getInput();
     const dt = world.timestep;
 
-    if (keys.reset) {
+    if (input.reset) {
       const half = rotationY / 2;
       chassis.setTranslation({ x: position[0], y: position[1], z: position[2] }, true);
       chassis.setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }, true);
@@ -130,13 +128,12 @@ export function VehicleRig({
     }
 
     let engine = 0;
-    let brake = keys.brake ? BRAKE_FORCE : 0;
+    let brake = input.brake ? BRAKE_FORCE : 0;
     let steerTarget = 0;
     if (enabled) {
-      if (keys.forward) engine = ENGINE_FORCE;
-      else if (keys.back) engine = -REVERSE_FORCE;
-      if (keys.left) steerTarget += MAX_STEER;
-      if (keys.right) steerTarget -= MAX_STEER;
+      // Analog throttle: forward scales engine force, reverse scales reverse force.
+      engine = input.throttle >= 0 ? input.throttle * ENGINE_FORCE : input.throttle * REVERSE_FORCE;
+      steerTarget = input.steer * MAX_STEER;
     } else {
       // Held at the grid during the countdown.
       brake = BRAKE_FORCE;

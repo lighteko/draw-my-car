@@ -17,6 +17,7 @@ import type { Quat, Standing, Vec3n } from "@/lib/roomTypes";
 import { VehicleRig } from "./VehicleRig";
 import { RaceHud, type RaceResult } from "./RaceHud";
 import { RemoteVehicle, type Snapshot } from "./RemoteVehicle";
+import { TouchControls } from "./TouchControls";
 
 export interface RemoteRacer {
   deviceId: string;
@@ -142,7 +143,7 @@ export function RaceScene({
           castShadow
           position={[40, 70, 20]}
           intensity={2}
-          shadow-mapSize={[2048, 2048]}
+          shadow-mapSize={[1024, 1024]}
           shadow-camera-near={1}
           shadow-camera-far={260}
           shadow-camera-left={-90}
@@ -197,6 +198,7 @@ export function RaceScene({
         selfDeviceId={selfDeviceId}
         onExit={onExit}
       />
+      <TouchControls />
     </div>
   );
 }

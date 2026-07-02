@@ -133,7 +133,7 @@ export default function Home() {
       )}
 
       {/* Bottom action bar */}
-      <div className="absolute inset-x-0 bottom-6 flex items-center justify-center gap-3 px-4">
+      <div className="absolute inset-x-0 bottom-6 flex flex-wrap items-center justify-center gap-3 px-4">
         {count > 0 && (
           <button
             type="button"
