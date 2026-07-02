@@ -45,6 +45,7 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
   let current = initial;
   let subscribed = false;
   let tracking = false;
+  let broadcastingState = false;
 
   // Presence updates can be triggered back-to-back (pick car, then ready up).
   // Serialize channel.track calls so an older request cannot finish last and
@@ -61,9 +62,31 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
     }
   };
 
+  // Mutable player state also travels over Broadcast. Keep it independent from
+  // channel.track: Presence can take until its timeout to acknowledge a failed
+  // update, while Ready must reach the host immediately.
+  const syncPlayerState = async (): Promise<void> => {
+    if (!subscribed || broadcastingState) return;
+    broadcastingState = true;
+    const snapshot = current;
+    try {
+      await channel.send({
+        type: "broadcast",
+        event: "msg",
+        payload: { kind: "player_state", member: snapshot } satisfies RoomMessage,
+      });
+    } finally {
+      broadcastingState = false;
+      if (subscribed && current !== snapshot) void syncPlayerState();
+    }
+  };
+
   channel.subscribe((status) => {
     subscribed = status === "SUBSCRIBED";
-    if (subscribed) void syncPresence();
+    if (subscribed) {
+      void syncPresence();
+      void syncPlayerState();
+    }
   });
 
   return {
@@ -73,6 +96,7 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
     updatePresence(meta) {
       current = meta;
       void syncPresence();
+      void syncPlayerState();
     },
     leave() {
       subscribed = false;

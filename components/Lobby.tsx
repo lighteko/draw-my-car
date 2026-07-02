@@ -120,9 +120,27 @@ export function Lobby({
       code,
       { deviceId, username, role, carId, carName, ready: isReady },
       {
-        onPresence: setMembers,
+        // Presence owns membership. Preserve any newer player_state broadcast
+        // while reconciling who is still connected.
+        onPresence: (incoming) => {
+          setMembers((current) => {
+            const known = new Map(current.map((member) => [member.deviceId, member]));
+            return incoming.map((member) => known.get(member.deviceId) ?? member);
+          });
+        },
         onMessage: (msg: RoomMessage) => {
           if (msg.kind === "settings") setSettings(msg.settings);
+          else if (msg.kind === "player_state") {
+            setMembers((current) => {
+              const index = current.findIndex(
+                (member) => member.deviceId === msg.member.deviceId,
+              );
+              if (index < 0) return [...current, msg.member];
+              const next = [...current];
+              next[index] = msg.member;
+              return next;
+            });
+          }
           else if (msg.kind === "start")
             router.push(`/r/${code}/race?track=${msg.trackId}&laps=${msg.laps}`);
         },

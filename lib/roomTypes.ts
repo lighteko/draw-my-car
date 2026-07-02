@@ -60,6 +60,7 @@ export interface Standing {
 
 export type RoomMessage =
   | { kind: "settings"; settings: RaceSettings }
+  | { kind: "player_state"; member: PresenceMeta }
   | { kind: "start"; trackId: string; laps: number; grid: GridSlot[]; startAt: number }
   // High-frequency car pose (kept out of React state; buffered + interpolated).
   | { kind: "transform"; deviceId: string; p: Vec3n; q: Quat }
