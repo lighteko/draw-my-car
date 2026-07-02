@@ -12,7 +12,7 @@ import { applyDoodleStyle } from "@/lib/doodle";
  *
  * Client-only (WebGL). The camera auto-orbits and the player can drag to spin it manually
  * (azimuth only; zoom/pan locked), resuming auto-rotate after. Reuses the driving-scene
- * look: normalizeOrientation for pose/scale and applyDoodleStyle for the toon + outline.
+ * look: normalizeOrientation for pose/scale and applyDoodleStyle for the toon shading.
  */
 export function GarageTurntable({ glbUrl }: { glbUrl: string | null }) {
   return (

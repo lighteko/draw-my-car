@@ -14,7 +14,7 @@ import {
 import type { DynamicRayCastVehicleController } from "@dimforge/rapier3d-compat";
 import type { RigSpec } from "@/lib/rig";
 import { useDriveControls } from "./useDriveControls";
-import { getToonGradientMap, OUTLINE_COLOR, outlineScaleFor } from "@/lib/doodle";
+import { getToonGradientMap } from "@/lib/doodle";
 
 /**
  * VehicleRig builds a Rapier raycast vehicle from a RigSpec. Physics is always
@@ -188,25 +188,16 @@ export function VehicleRig({
 
       {visual ?? (
         <>
-          <DoodlePart dims={[hx * 2, hy * 2, hz * 2]} color="#2563eb">
-            {() => <boxGeometry args={[hx * 2, hy * 2, hz * 2]} />}
+          <DoodlePart color="#2563eb">
+            <boxGeometry args={[hx * 2, hy * 2, hz * 2]} />
           </DoodlePart>
 
-          <DoodlePart
-            dims={[hx * 1.5, 0.4, hz * 0.95]}
-            color="#1e3a8a"
-            position={[0, hy + 0.18, -0.15]}
-          >
-            {() => <boxGeometry args={[hx * 1.5, 0.4, hz * 0.95]} />}
+          <DoodlePart color="#1e3a8a" position={[0, hy + 0.18, -0.15]}>
+            <boxGeometry args={[hx * 1.5, 0.4, hz * 0.95]} />
           </DoodlePart>
 
-          <DoodlePart
-            dims={[hx * 1.2, hy * 0.8, 0.12]}
-            color="#fbbf24"
-            position={[0, 0, hz * 0.96]}
-            castShadow={false}
-          >
-            {() => <boxGeometry args={[hx * 1.2, hy * 0.8, 0.12]} />}
+          <DoodlePart color="#fbbf24" position={[0, 0, hz * 0.96]} castShadow={false}>
+            <boxGeometry args={[hx * 1.2, hy * 0.8, 0.12]} />
           </DoodlePart>
 
           {rig.wheels.map((w, i) => (
@@ -216,15 +207,11 @@ export function VehicleRig({
                 wheelRefs.current[i] = el;
               }}
             >
-              <DoodlePart dims={[w.radius * 2, w.width, w.radius * 2]} color="#111827">
-                {() => <cylinderGeometry args={[w.radius, w.radius, w.width, 24]} />}
+              <DoodlePart color="#111827">
+                <cylinderGeometry args={[w.radius, w.radius, w.width, 24]} />
               </DoodlePart>
-              <DoodlePart
-                dims={[w.width + 0.02, w.radius * 1.7, 0.06]}
-                color="#9ca3af"
-                castShadow={false}
-              >
-                {() => <boxGeometry args={[w.width + 0.02, w.radius * 1.7, 0.06]} />}
+              <DoodlePart color="#9ca3af" castShadow={false}>
+                <boxGeometry args={[w.width + 0.02, w.radius * 1.7, 0.06]} />
               </DoodlePart>
             </group>
           ))}
@@ -234,32 +221,23 @@ export function VehicleRig({
   );
 }
 
-/**
- * A flat-shaded "doodle" part: a cel-banded toon mesh plus a dark inverted-hull outline.
- * `children` is a factory so the same geometry is instanced for both the fill and outline.
- */
+/** A flat-shaded "doodle" part: a cel-banded toon mesh. */
 function DoodlePart({
-  dims,
   color,
   position,
   castShadow = true,
   children,
 }: {
-  dims: [number, number, number];
   color: string;
   position?: [number, number, number];
   castShadow?: boolean;
-  children: () => ReactNode;
+  children: ReactNode;
 }) {
   return (
     <group position={position}>
       <mesh castShadow={castShadow} receiveShadow>
-        {children()}
+        {children}
         <meshToonMaterial color={color} gradientMap={getToonGradientMap()} />
-      </mesh>
-      <mesh scale={outlineScaleFor(dims)}>
-        {children()}
-        <meshBasicMaterial color={OUTLINE_COLOR} side={THREE.BackSide} />
       </mesh>
     </group>
   );
