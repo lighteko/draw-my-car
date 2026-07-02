@@ -85,6 +85,7 @@ export function RaceScene({
   const track = useMemo(() => getTrack(trackId), [trackId]);
   const spawn = track.spawns[spawnIndex % track.spawns.length];
   const chassisRef = useRef<RapierRigidBody>(null);
+  const carAnchor = useRef<THREE.Object3D>(null);
 
   const [phase, setPhase] = useState<Phase>("countdown");
   const [countdown, setCountdown] = useState(3);
@@ -171,6 +172,7 @@ export function RaceScene({
                   spawn={spawn}
                   enabled={phase === "racing"}
                   bodyRef={chassisRef}
+                  anchorRef={carAnchor}
                 />
               </Suspense>
               <LapTracker
@@ -194,7 +196,7 @@ export function RaceScene({
           ))}
         </Physics>
 
-        {spectator ? <SpectatorCamera track={track} /> : <ChaseCamera target={chassisRef} />}
+        {spectator ? <SpectatorCamera track={track} /> : <ChaseCamera target={carAnchor} />}
       </Canvas>
 
       <RaceHud
@@ -324,11 +326,13 @@ function RaceCar({
   spawn,
   enabled,
   bodyRef,
+  anchorRef,
 }: {
   glbUrl: string | null;
   spawn: { position: [number, number, number]; rotationY: number };
   enabled: boolean;
   bodyRef: RefObject<RapierRigidBody | null>;
+  anchorRef: RefObject<THREE.Object3D | null>;
 }) {
   const spawnPos: [number, number, number] = [spawn.position[0], 1.2, spawn.position[2]];
   if (!glbUrl) {
@@ -336,6 +340,7 @@ function RaceCar({
       <VehicleRig
         rig={getPlaceholderRig()}
         bodyRef={bodyRef}
+        anchorRef={anchorRef}
         position={spawnPos}
         rotationY={spawn.rotationY}
         enabled={enabled}
@@ -343,7 +348,14 @@ function RaceCar({
     );
   }
   return (
-    <RaceCarModel url={glbUrl} spawnPos={spawnPos} rotationY={spawn.rotationY} enabled={enabled} bodyRef={bodyRef} />
+    <RaceCarModel
+      url={glbUrl}
+      spawnPos={spawnPos}
+      rotationY={spawn.rotationY}
+      enabled={enabled}
+      bodyRef={bodyRef}
+      anchorRef={anchorRef}
+    />
   );
 }
 
@@ -353,12 +365,14 @@ function RaceCarModel({
   rotationY,
   enabled,
   bodyRef,
+  anchorRef,
 }: {
   url: string;
   spawnPos: [number, number, number];
   rotationY: number;
   enabled: boolean;
   bodyRef: RefObject<RapierRigidBody | null>;
+  anchorRef: RefObject<THREE.Object3D | null>;
 }) {
   const gltf = useGLTF(url);
   const { visual, rig } = useMemo(() => {
@@ -378,6 +392,7 @@ function RaceCarModel({
     <VehicleRig
       rig={rig}
       bodyRef={bodyRef}
+      anchorRef={anchorRef}
       visual={<primitive object={visual} />}
       position={spawnPos}
       rotationY={rotationY}
@@ -463,7 +478,14 @@ function SpectatorCamera({ track }: { track: TrackDef }) {
   return null;
 }
 
-function ChaseCamera({ target }: { target: RefObject<RapierRigidBody | null> }) {
+/**
+ * ChaseCamera follows an anchor *inside* the rigid body (the interpolated, render-smoothed
+ * transform) rather than the raw physics body — following the raw body makes the whole
+ * world appear to vibrate because the mesh is interpolated between fixed physics steps but
+ * the camera would step at the physics rate. The anchor's world transform reads a frame
+ * behind but stays smooth, which is what matters.
+ */
+function ChaseCamera({ target }: { target: RefObject<THREE.Object3D | null> }) {
   const { camera } = useThree();
   const carPos = useMemo(() => new THREE.Vector3(), []);
   const carQuat = useMemo(() => new THREE.Quaternion(), []);
@@ -473,12 +495,10 @@ function ChaseCamera({ target }: { target: RefObject<RapierRigidBody | null> }) 
   const up = useMemo(() => new THREE.Vector3(0, 1, 0), []);
 
   useFrame((_, dt) => {
-    const body = target.current;
-    if (!body) return;
-    const t = body.translation();
-    const r = body.rotation();
-    carPos.set(t.x, t.y, t.z);
-    carQuat.set(r.x, r.y, r.z, r.w);
+    const anchor = target.current;
+    if (!anchor) return;
+    anchor.getWorldPosition(carPos);
+    anchor.getWorldQuaternion(carQuat);
     forward.set(0, 0, 1).applyQuaternion(carQuat);
     desired.copy(carPos).addScaledVector(forward, -8).addScaledVector(up, 4);
 

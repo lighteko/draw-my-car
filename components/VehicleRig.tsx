@@ -46,6 +46,7 @@ export function VehicleRig({
   position = [0, 1.2, 0],
   rotationY = 0,
   enabled = true,
+  anchorRef,
 }: {
   rig: RigSpec;
   bodyRef: RefObject<RapierRigidBody | null>;
@@ -55,6 +56,8 @@ export function VehicleRig({
   rotationY?: number;
   /** When false, the car is held braked at the line (e.g. during the countdown). */
   enabled?: boolean;
+  /** Optional anchor inside the interpolated rigid body — follow this for a jitter-free camera. */
+  anchorRef?: RefObject<THREE.Object3D | null>;
 }) {
   const { world } = useRapier();
   const controllerRef = useRef<DynamicRayCastVehicleController | null>(null);
@@ -181,6 +184,7 @@ export function VehicleRig({
       type="dynamic"
     >
       <CuboidCollider args={[hx, hy, hz]} mass={rig.chassisMass} />
+      {anchorRef ? <object3D ref={anchorRef} /> : null}
 
       {visual ?? (
         <>
