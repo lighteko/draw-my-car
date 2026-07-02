@@ -27,6 +27,7 @@ interface RaceConfig {
   glb: string | null;
   ownerDeviceId: string;
   gateCount: number;
+  spectator: boolean;
 }
 
 interface PlayerProgress {
@@ -136,9 +137,10 @@ function RoomRace() {
 
       if (cancelled) return;
       const gateCount = getTrack(trackId!).gates.length;
+      const spectator = window.localStorage.getItem("dmc_role") === "spectator";
       ownerRef.current = ownerDeviceId;
       gateCountRef.current = gateCount;
-      setConfig({ trackId: trackId!, laps, glb, ownerDeviceId, gateCount });
+      setConfig({ trackId: trackId!, laps, glb, ownerDeviceId, gateCount, spectator });
     })();
     return () => {
       cancelled = true;
@@ -226,7 +228,7 @@ function RoomRace() {
     const meta: PresenceMeta = {
       deviceId,
       username,
-      role: "player",
+      role: config.spectator ? "spectator" : "player",
       carId,
       carName: null,
       ready: true,
@@ -269,7 +271,7 @@ function RoomRace() {
     handleRef.current?.send({ kind: "standings", entries: next });
   }
 
-  if (!config || spawnIndex == null) {
+  if (!config || (!config.spectator && spawnIndex == null)) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
         Lining up on the grid…
@@ -282,8 +284,9 @@ function RoomRace() {
       trackId={config.trackId}
       carGlbUrl={config.glb}
       laps={config.laps}
-      spawnIndex={spawnIndex}
+      spawnIndex={spawnIndex ?? 0}
       selfDeviceId={deviceId}
+      spectator={config.spectator}
       remotes={remotes}
       remoteBuffers={remoteBuffers}
       standings={standings}
@@ -291,6 +294,7 @@ function RoomRace() {
       onProgress={reportProgress}
       onFinished={reportFinished}
       onExit={() => router.push(`/r/${params.code}`)}
+      exitLabel="Back to lobby"
     />
   );
 }

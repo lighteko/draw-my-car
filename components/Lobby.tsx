@@ -125,6 +125,11 @@ export function Lobby({
     handleRef.current?.updatePresence(myMeta);
   }, [myMeta]);
 
+  // Persist the chosen role so the race page knows whether to spectate.
+  useEffect(() => {
+    window.localStorage.setItem("dmc_role", role);
+  }, [role]);
+
   const applySettings = useCallback(
     (next: RaceSettings) => {
       setSettings(next);

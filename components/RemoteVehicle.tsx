@@ -1,19 +1,25 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef } from "react";
+import { Suspense, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
+import {
+  CuboidCollider,
+  RigidBody,
+  useBeforePhysicsStep,
+  type RapierRigidBody,
+} from "@react-three/rapier";
 import { normalizeOrientation } from "@/lib/rig";
 import { applyDoodleStyle } from "@/lib/doodle";
 import type { Quat, Vec3n } from "@/lib/roomTypes";
 
 /**
- * RemoteVehicle — another player's car, driven by the network, not physics.
+ * RemoteVehicle — another player's car, driven by the network, not by physics.
  *
- * Incoming poses are buffered (tagged with local receive time) and rendered ~100 ms in
- * the past, interpolating between the two surrounding snapshots. Using local receive time
- * (not the sender's clock) sidesteps cross-client clock skew.
+ * Incoming poses are buffered (tagged with local receive time) and applied ~100 ms in the
+ * past, interpolating between the two surrounding snapshots (local time sidesteps clock
+ * skew). The car is a kinematic-position body so the local dynamic car feels bumps against
+ * it (one-directional — the ghost is unaffected, so there's no authority conflict).
  */
 
 export interface Snapshot {
@@ -42,52 +48,52 @@ export function RemoteVehicle({
   spawn: { position: Vec3n; rotationY: number };
   getBuffer: () => Snapshot[] | undefined;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
-
-  // Sit at the grid slot until the first pose arrives.
-  useEffect(() => {
-    const g = groupRef.current;
-    if (!g) return;
-    g.position.set(spawn.position[0], 1.2, spawn.position[2]);
-    g.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), spawn.rotationY);
-  }, [spawn]);
-
+  const bodyRef = useRef<RapierRigidBody>(null);
   const qa = useMemo(() => new THREE.Quaternion(), []);
   const qb = useMemo(() => new THREE.Quaternion(), []);
+  const out = useMemo(() => new THREE.Quaternion(), []);
 
-  useFrame(() => {
-    const g = groupRef.current;
+  useBeforePhysicsStep(() => {
+    const body = bodyRef.current;
+    if (!body) return;
     const buf = getBuffer();
-    if (!g || !buf || buf.length === 0) return;
+
+    if (!buf || buf.length === 0) return; // stay at the grid until poses arrive
 
     const renderTime = performance.now() - INTERP_DELAY;
-
-    // Latest snapshot at or before renderTime.
     let i = buf.length - 1;
     while (i > 0 && buf[i].t > renderTime) i--;
     const a = buf[i];
     const b = buf[i + 1];
 
     if (!b) {
-      g.position.set(a.p[0], a.p[1], a.p[2]);
-      g.quaternion.set(a.q[0], a.q[1], a.q[2], a.q[3]);
+      body.setNextKinematicTranslation({ x: a.p[0], y: a.p[1], z: a.p[2] });
+      body.setNextKinematicRotation({ x: a.q[0], y: a.q[1], z: a.q[2], w: a.q[3] });
       return;
     }
 
     const span = b.t - a.t || 1;
     const alpha = THREE.MathUtils.clamp((renderTime - a.t) / span, 0, 1);
-    g.position.set(
-      THREE.MathUtils.lerp(a.p[0], b.p[0], alpha),
-      THREE.MathUtils.lerp(a.p[1], b.p[1], alpha),
-      THREE.MathUtils.lerp(a.p[2], b.p[2], alpha),
-    );
+    body.setNextKinematicTranslation({
+      x: THREE.MathUtils.lerp(a.p[0], b.p[0], alpha),
+      y: THREE.MathUtils.lerp(a.p[1], b.p[1], alpha),
+      z: THREE.MathUtils.lerp(a.p[2], b.p[2], alpha),
+    });
     qa.set(a.q[0], a.q[1], a.q[2], a.q[3]);
     qb.set(b.q[0], b.q[1], b.q[2], b.q[3]);
-    g.quaternion.slerpQuaternions(qa, qb, alpha);
+    out.slerpQuaternions(qa, qb, alpha);
+    body.setNextKinematicRotation({ x: out.x, y: out.y, z: out.z, w: out.w });
   });
 
   return (
-    <group ref={groupRef}>
+    <RigidBody
+      ref={bodyRef}
+      type="kinematicPosition"
+      colliders={false}
+      position={[spawn.position[0], 1.2, spawn.position[2]]}
+      rotation={[0, spawn.rotationY, 0]}
+    >
+      <CuboidCollider args={[0.9, 0.5, 1.9]} />
       {glbUrl ? (
         <Suspense fallback={null}>
           <RemoteModel url={glbUrl} />
@@ -95,7 +101,7 @@ export function RemoteVehicle({
       ) : (
         <GhostCar />
       )}
-    </group>
+    </RigidBody>
   );
 }
 

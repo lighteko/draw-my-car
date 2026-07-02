@@ -18,6 +18,7 @@ import { VehicleRig } from "./VehicleRig";
 import { RaceHud, type RaceResult } from "./RaceHud";
 import { RemoteVehicle, type Snapshot } from "./RemoteVehicle";
 import { TouchControls } from "./TouchControls";
+import { Minimap } from "./Minimap";
 
 export interface RemoteRacer {
   deviceId: string;
@@ -55,6 +56,8 @@ export function RaceScene({
   onFinished,
   standings = [],
   selfDeviceId,
+  spectator = false,
+  exitLabel,
 }: {
   trackId: string;
   carGlbUrl: string | null;
@@ -74,6 +77,10 @@ export function RaceScene({
   standings?: Standing[];
   /** Highlights the local player in the leaderboard. */
   selfDeviceId?: string;
+  /** Spectators watch from an overview camera and don't drive. */
+  spectator?: boolean;
+  /** Label for the exit / results button (e.g. "Back to lobby"). */
+  exitLabel?: string;
 }) {
   const track = useMemo(() => getTrack(trackId), [trackId]);
   const spawn = track.spawns[spawnIndex % track.spawns.length];
@@ -88,6 +95,7 @@ export function RaceScene({
   const [startAt, setStartAt] = useState<number | null>(null);
 
   const progress = useRef<Progress>({ nextGate: 1, lap: 0, lapStart: 0, lapTimes: [] });
+  const emptyBuffers = useRef<Map<string, Snapshot[]>>(new Map());
 
   // Countdown 3 → 2 → 1 → GO. All transitions run inside timer callbacks (not
   // synchronously in the effect), and the effect runs once.
@@ -154,23 +162,27 @@ export function RaceScene({
 
         <Physics>
           <TrackView track={track} nextGate={nextGate} />
-          <Suspense fallback={null}>
-            <RaceCar
-              glbUrl={carGlbUrl}
-              spawn={spawn}
-              enabled={phase === "racing"}
-              bodyRef={chassisRef}
-            />
-          </Suspense>
-          <LapTracker
-            bodyRef={chassisRef}
-            gates={track.gates}
-            active={phase === "racing"}
-            progress={progress}
-            onGatePass={onGatePass}
-          />
 
-          {onTransform && <TransformBroadcaster bodyRef={chassisRef} onTransform={onTransform} />}
+          {!spectator && (
+            <>
+              <Suspense fallback={null}>
+                <RaceCar
+                  glbUrl={carGlbUrl}
+                  spawn={spawn}
+                  enabled={phase === "racing"}
+                  bodyRef={chassisRef}
+                />
+              </Suspense>
+              <LapTracker
+                bodyRef={chassisRef}
+                gates={track.gates}
+                active={phase === "racing"}
+                progress={progress}
+                onGatePass={onGatePass}
+              />
+              {onTransform && <TransformBroadcaster bodyRef={chassisRef} onTransform={onTransform} />}
+            </>
+          )}
 
           {remotes.map((r) => (
             <RemoteVehicle
@@ -182,7 +194,7 @@ export function RaceScene({
           ))}
         </Physics>
 
-        <ChaseCamera target={chassisRef} />
+        {spectator ? <SpectatorCamera track={track} /> : <ChaseCamera target={chassisRef} />}
       </Canvas>
 
       <RaceHud
@@ -196,9 +208,12 @@ export function RaceScene({
         result={result}
         standings={standings}
         selfDeviceId={selfDeviceId}
+        spectator={spectator}
+        exitLabel={exitLabel}
         onExit={onExit}
       />
-      <TouchControls />
+      {!spectator && <TouchControls />}
+      <Minimap track={track} selfBody={chassisRef} remoteBuffers={remoteBuffers ?? emptyBuffers} />
     </div>
   );
 }
@@ -421,6 +436,29 @@ function TransformBroadcaster({
     const t = body.translation();
     const r = body.rotation();
     onTransform([t.x, t.y, t.z], [r.x, r.y, r.z, r.w]);
+  });
+  return null;
+}
+
+/** Slow overview orbit for spectators (no car to follow). */
+function SpectatorCamera({ track }: { track: TrackDef }) {
+  const { camera } = useThree();
+  const view = useMemo(() => {
+    const xs = track.gates.map((g) => g.position[0]);
+    const zs = track.gates.map((g) => g.position[2]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+    const radius = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs));
+    return { cx, cz, radius };
+  }, [track]);
+  const target = useMemo(() => new THREE.Vector3(view.cx, 0, view.cz), [view]);
+
+  useFrame((state) => {
+    const a = state.clock.elapsedTime * 0.08;
+    const dist = view.radius * 1.1 + 20;
+    const height = view.radius * 0.7 + 25;
+    camera.position.set(view.cx + Math.cos(a) * dist, height, view.cz + Math.sin(a) * dist);
+    camera.lookAt(target);
   });
   return null;
 }

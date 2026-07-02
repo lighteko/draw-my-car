@@ -34,6 +34,8 @@ export function RaceHud({
   result,
   standings = [],
   selfDeviceId,
+  spectator = false,
+  exitLabel = "Done",
   onExit,
 }: {
   phase: Phase;
@@ -46,6 +48,8 @@ export function RaceHud({
   result: RaceResult | null;
   standings?: Standing[];
   selfDeviceId?: string;
+  spectator?: boolean;
+  exitLabel?: string;
   onExit?: () => void;
 }) {
   // Refresh the running clock (~12 fps is plenty for a timer readout). performance.now()
@@ -73,8 +77,14 @@ export function RaceHud({
         </button>
       )}
 
+      {spectator && (
+        <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full bg-black/45 px-4 py-1.5 font-mono text-xs text-white backdrop-blur">
+          Spectating
+        </div>
+      )}
+
       {/* Lap + timer */}
-      {phase !== "countdown" && (
+      {!spectator && phase !== "countdown" && (
         <div className="pointer-events-none absolute right-4 top-4 z-10 flex flex-col items-end gap-1 font-mono text-white">
           <div className="rounded-md bg-black/45 px-3 py-1.5 text-sm backdrop-blur">
             Lap {Math.min(lap + (phase === "finished" ? 0 : 1), totalLaps)} / {totalLaps}
@@ -125,7 +135,7 @@ export function RaceHud({
       )}
 
       {/* Results */}
-      {phase === "finished" && result && (
+      {!spectator && phase === "finished" && result && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-neutral-900 p-6 text-white shadow-2xl">
             <h2 className="mb-1 text-center text-2xl font-bold">Finished! 🏁</h2>
@@ -151,7 +161,7 @@ export function RaceHud({
               onClick={onExit}
               className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 font-semibold transition hover:bg-emerald-500"
             >
-              Done
+              {exitLabel}
             </button>
           </div>
         </div>

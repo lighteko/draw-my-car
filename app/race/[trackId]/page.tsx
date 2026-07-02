@@ -72,6 +72,7 @@ function Practice() {
       carGlbUrl={config.glb}
       laps={laps}
       onExit={() => router.push("/")}
+      exitLabel="Back to garage"
     />
   );
 }
