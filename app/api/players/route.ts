@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServiceClient, hasSupabase } from "@/lib/supabase";
+import { upsertPlayer } from "@/lib/players";
 
 /**
  * POST /api/players — upsert the player identified by their device id.
@@ -17,27 +17,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "missing deviceId" }, { status: 400 });
   }
 
-  const username = body?.username?.trim() || null;
-
-  if (!hasSupabase()) {
-    return NextResponse.json({ deviceId, username });
+  try {
+    const player = await upsertPlayer(deviceId, body?.username?.trim() || null);
+    return NextResponse.json(player);
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "failed to upsert player" },
+      { status: 500 },
+    );
   }
-
-  const payload: Record<string, unknown> = {
-    device_id: deviceId,
-    last_seen: new Date().toISOString(),
-  };
-  if (username) payload.username = username;
-
-  const { data, error } = await getServiceClient()
-    .from("players")
-    .upsert(payload, { onConflict: "device_id" })
-    .select("device_id, username")
-    .single();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json({ deviceId: data.device_id, username: data.username });
 }

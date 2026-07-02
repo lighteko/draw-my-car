@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getJob } from "@/lib/db";
 import { createCar, listCars } from "@/lib/cars";
+import { upsertPlayer } from "@/lib/players";
 
 function deviceId(req: NextRequest): string | null {
   return req.headers.get("x-device-id");
@@ -31,6 +32,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (job.status !== "ready" || !job.carUrl) {
     return NextResponse.json({ error: "job is not ready" }, { status: 409 });
   }
+
+  // Ensure the owning player row exists before the FK insert.
+  await upsertPlayer(id);
 
   const car = await createCar({
     ownerDeviceId: id,
