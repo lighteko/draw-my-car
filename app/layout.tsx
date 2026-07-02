@@ -22,6 +22,9 @@ const rajdhani = Rajdhani({
 export const metadata: Metadata = {
   title: "Draw & Drive",
   description: "Draw a car, then race your friends.",
+  // Launch fullscreen when added to the home screen (esp. iOS, which lacks the FS API).
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Draw & Drive" },
+  other: { "mobile-web-app-capable": "yes" },
 };
 
 export const viewport: Viewport = {

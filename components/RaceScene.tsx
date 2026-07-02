@@ -13,6 +13,7 @@ import {
 } from "@/lib/rig";
 import { applyDoodleStyle } from "@/lib/doodle";
 import { getTrack, GATE_TRIGGER_RADIUS, type Gate, type TrackDef } from "@/lib/tracks";
+import { useAutoFullscreen } from "@/lib/fullscreen";
 import type { Quat, Standing, Vec3n } from "@/lib/roomTypes";
 import { VehicleRig } from "./VehicleRig";
 import { RaceHud, type RaceResult } from "./RaceHud";
@@ -82,6 +83,7 @@ export function RaceScene({
   /** Label for the exit / results button (e.g. "Back to lobby"). */
   exitLabel?: string;
 }) {
+  useAutoFullscreen();
   const track = useMemo(() => getTrack(trackId), [trackId]);
   const spawn = track.spawns[spawnIndex % track.spawns.length];
   const chassisRef = useRef<RapierRigidBody>(null);
@@ -142,7 +144,7 @@ export function RaceScene({
   };
 
   return (
-    <div className="relative h-dvh w-full overflow-hidden bg-neutral-900">
+    <div className="relative h-dvh w-full touch-none overflow-hidden bg-neutral-900">
       <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 6, -12], fov: 60 }}>
         <color attach="background" args={[track.skyColor]} />
         <fog attach="fog" args={[track.skyColor, 80, 260]} />

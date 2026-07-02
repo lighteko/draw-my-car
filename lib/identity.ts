@@ -22,31 +22,75 @@ function randomUsername(): string {
   return `${a} ${n} ${Math.floor(Math.random() * 90 + 10)}`;
 }
 
+/**
+ * A v4 UUID that works everywhere. crypto.randomUUID() is only defined in a *secure
+ * context*, so on a phone hitting the dev server over http://LAN it's undefined — calling
+ * it there throws and crashes the page. Fall back to getRandomValues (available on
+ * insecure origins) or Math.random.
+ */
+function safeUuid(): string {
+  const c = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+  if (c && typeof c.randomUUID === "function") {
+    try {
+      return c.randomUUID();
+    } catch {
+      /* fall through */
+    }
+  }
+  const b = new Uint8Array(16);
+  if (c && typeof c.getRandomValues === "function") c.getRandomValues(b);
+  else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0"));
+  return `${h[0]}${h[1]}${h[2]}${h[3]}-${h[4]}${h[5]}-${h[6]}${h[7]}-${h[8]}${h[9]}-${h[10]}${h[11]}${h[12]}${h[13]}${h[14]}${h[15]}`;
+}
+
+let memoryDeviceId = "";
+
 /** Read (minting if needed) the persistent device id. Returns "" during SSR. */
 export function getDeviceId(): string {
   if (typeof window === "undefined") return "";
-  let id = window.localStorage.getItem(DEVICE_KEY);
-  if (!id) {
-    id = crypto.randomUUID();
-    window.localStorage.setItem(DEVICE_KEY, id);
+  try {
+    let id = window.localStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id = safeUuid();
+      window.localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch {
+    // localStorage blocked (private mode / embedded webview): per-session id.
+    if (!memoryDeviceId) memoryDeviceId = safeUuid();
+    return memoryDeviceId;
   }
-  return id;
 }
+
+let memoryUsername = "";
 
 /** Read (minting a friendly default if needed) the stored username. Returns "" during SSR. */
 export function getUsername(): string {
   if (typeof window === "undefined") return "";
-  let name = window.localStorage.getItem(USERNAME_KEY);
-  if (!name) {
-    name = randomUsername();
-    window.localStorage.setItem(USERNAME_KEY, name);
+  try {
+    let name = window.localStorage.getItem(USERNAME_KEY);
+    if (!name) {
+      name = randomUsername();
+      window.localStorage.setItem(USERNAME_KEY, name);
+    }
+    return name;
+  } catch {
+    if (!memoryUsername) memoryUsername = randomUsername();
+    return memoryUsername;
   }
-  return name;
 }
 
 export function setUsername(name: string): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(USERNAME_KEY, name);
+  memoryUsername = name;
+  try {
+    window.localStorage.setItem(USERNAME_KEY, name);
+  } catch {
+    /* kept in memory only */
+  }
 }
 
 /** Header bag identifying the device on API calls. */

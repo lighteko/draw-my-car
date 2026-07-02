@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { usePlayer } from "@/lib/identity";
 import { hasBrowserSupabase } from "@/lib/supabase-browser";
+import { enterFullscreen, isTouchDevice, useAutoFullscreen } from "@/lib/fullscreen";
 import { joinRoom, type RoomHandle } from "@/lib/realtime";
 import { apiGet, apiPatch } from "@/lib/api";
 import { TRACKS, trackName, resolveTrackId } from "@/lib/tracks";
@@ -40,6 +41,7 @@ export function Lobby({
 }) {
   const { deviceId, username, ready } = usePlayer();
   const router = useRouter();
+  useAutoFullscreen();
 
   const [settings, setSettings] = useState<RaceSettings>(initialSettings);
   const [members, setMembers] = useState<PresenceMeta[]>([]);
@@ -171,6 +173,7 @@ export function Lobby({
       startAt: Date.now() + 1000,
     });
     apiPatch(`/api/rooms/${code}`, { status: "racing" }).catch(() => {});
+    if (isTouchDevice()) await enterFullscreen();
     router.push(`/r/${code}/race?track=${resolved}&laps=${settings.laps}`);
   };
 

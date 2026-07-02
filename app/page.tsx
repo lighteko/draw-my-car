@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { usePlayer } from "@/lib/identity";
 import { apiGet, apiPost } from "@/lib/api";
 import { hasBrowserSupabase } from "@/lib/supabase-browser";
+import { enterFullscreen, isTouchDevice, useAutoFullscreen } from "@/lib/fullscreen";
 import type { Car } from "@/lib/cars";
 import { CreateCarModal } from "@/components/CreateCarModal";
 
@@ -25,6 +26,7 @@ const ACTIVE_CAR_KEY = "dmc_active_car";
 export default function Home() {
   const { username, ready, rename } = usePlayer();
   const router = useRouter();
+  useAutoFullscreen();
   const [cars, setCars] = useState<Car[] | null>(null);
   const [index, setIndex] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
@@ -68,6 +70,7 @@ export default function Home() {
 
   const play = useCallback(async () => {
     setCreatingRoom(true);
+    if (isTouchDevice()) await enterFullscreen();
     try {
       const { room } = await apiPost<{ room: { code: string } }>("/api/rooms");
       router.push(`/r/${room.code}`);
@@ -180,7 +183,13 @@ export default function Home() {
               </span>
             )}
           </button>
-          <Link href={`/race/random?car=${selected.id}`} className="btn-ghost px-5 py-2.5 text-sm">
+          <Link
+            href={`/race/random?car=${selected.id}`}
+            onClick={() => {
+              if (isTouchDevice()) void enterFullscreen();
+            }}
+            className="btn-ghost px-5 py-2.5 text-sm"
+          >
             Practice
           </Link>
         </div>
