@@ -1,16 +1,18 @@
 "use client";
 
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { getTrack, resolveTrackId } from "@/lib/tracks";
 import { apiGet } from "@/lib/api";
 import { usePlayer } from "@/lib/identity";
 import { joinRoom, type RoomHandle } from "@/lib/realtime";
+import { loadRaceHandoff, saveRaceHandoff } from "@/lib/raceHandoff";
 import { pushSnapshot, type Snapshot } from "@/components/RemoteVehicle";
 import { RaceSceneClient } from "@/components/RaceSceneClient";
 import type { RemoteRacer } from "@/components/RaceScene";
 import type { Car } from "@/lib/cars";
 import type {
+  GridSlot,
   PresenceMeta,
   Quat,
   RaceSettings,
@@ -20,6 +22,13 @@ import type {
 } from "@/lib/roomTypes";
 
 const ACTIVE_CAR_KEY = "dmc_active_car";
+
+/** Lead between the "go" broadcast and the shared start, so every client sees the 3-2-1. */
+const GO_LEAD_MS = 3500;
+/** Owner: stop waiting for missing racers after this long and start with whoever arrived. */
+const GRID_WAIT_MS = 8000;
+/** Everyone: if no "go" ever arrives (owner gone), fall back to a local start. */
+const NO_GO_FALLBACK_MS = 12000;
 
 interface RaceConfig {
   trackId: string;
@@ -39,14 +48,17 @@ interface PlayerProgress {
   totalMs: number | null;
 }
 
-/** Slot = index of a device in the sorted player list — deterministic across clients. */
-function slotOf(members: PresenceMeta[], id: string): number {
-  const ordered = members
-    .filter((m) => m.role === "player")
-    .map((m) => m.deviceId)
-    .sort();
-  const i = ordered.indexOf(id);
-  return i < 0 ? 0 : i;
+/**
+ * Spawn slots come from the owner-assigned grid (unique by construction). Anyone who
+ * wasn't in the grid (direct URL join) gets a deterministic trailing slot.
+ */
+function slotMap(grid: GridSlot[], playerIds: string[]): Map<string, number> {
+  const map = new Map<string, number>(grid.map((g) => [g.deviceId, g.slot]));
+  playerIds
+    .filter((id) => !map.has(id))
+    .sort()
+    .forEach((id, i) => map.set(id, grid.length + i));
+  return map;
 }
 
 function computeStandings(map: Map<string, PlayerProgress>, gateCount: number): Standing[] {
@@ -93,9 +105,11 @@ function RoomRace() {
   const lapsParam = search.get("laps");
 
   const [config, setConfig] = useState<RaceConfig | null>(null);
+  const [members, setMembers] = useState<PresenceMeta[]>([]);
   const [remotes, setRemotes] = useState<RemoteRacer[]>([]);
   const [standings, setStandings] = useState<Standing[]>([]);
-  const [spawnIndex, setSpawnIndex] = useState<number | null>(null);
+  const [grid, setGrid] = useState<GridSlot[] | null>(null);
+  const [startAt, setStartAt] = useState<number | null>(null);
 
   const handleRef = useRef<RoomHandle | null>(null);
   const remoteBuffers = useRef<Map<string, Snapshot[]>>(new Map());
@@ -103,25 +117,32 @@ function RoomRace() {
   const progressMap = useRef<Map<string, PlayerProgress>>(new Map());
   const ownerRef = useRef("");
   const gateCountRef = useRef(0);
+  const gridRef = useRef<GridSlot[] | null>(null);
+  const goStartAtRef = useRef<number | null>(null);
 
-  // Resolve track/laps/car/owner once identity is ready.
+  // Resolve track/laps/car/owner/grid once identity is ready. The lobby handoff is the
+  // preferred source (it carries the owner-assigned grid); URL and the room API fill the
+  // gaps for cold loads without one.
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
     (async () => {
-      let trackId = trackParam;
-      let laps = Number(lapsParam) || 0;
-      let ownerDeviceId = "";
-      try {
-        const { room } = await apiGet<{ room: { settings: RaceSettings; ownerDeviceId: string } }>(
-          `/api/rooms/${params.code}`,
-        );
-        ownerDeviceId = room.ownerDeviceId;
-        if (!trackId) trackId = resolveTrackId(room.settings.trackId);
-        if (!laps) laps = room.settings.laps;
-      } catch {
-        if (!trackId) trackId = resolveTrackId("random");
-        if (!laps) laps = 3;
+      const handoff = loadRaceHandoff(params.code);
+      let trackId = handoff?.trackId ?? trackParam;
+      let laps = handoff?.laps ?? (Number(lapsParam) || 0);
+      let ownerDeviceId = handoff?.ownerDeviceId ?? "";
+      if (!trackId || !laps || !ownerDeviceId) {
+        try {
+          const { room } = await apiGet<{
+            room: { settings: RaceSettings; ownerDeviceId: string };
+          }>(`/api/rooms/${params.code}`);
+          if (!ownerDeviceId) ownerDeviceId = room.ownerDeviceId;
+          if (!trackId) trackId = resolveTrackId(room.settings.trackId);
+          if (!laps) laps = room.settings.laps;
+        } catch {
+          if (!trackId) trackId = resolveTrackId("random");
+          if (!laps) laps = 3;
+        }
       }
 
       const carId = window.localStorage.getItem(ACTIVE_CAR_KEY);
@@ -136,6 +157,15 @@ function RoomRace() {
       }
 
       if (cancelled) return;
+      if (handoff?.grid?.length) {
+        gridRef.current = handoff.grid;
+        setGrid(handoff.grid);
+      }
+      if (handoff?.startAt) {
+        // A reload mid-race rejoins on the shared clock instead of waiting for "go".
+        goStartAtRef.current = handoff.startAt;
+        setStartAt(handoff.startAt);
+      }
       const gateCount = getTrack(trackId!).gates.length;
       const spectator = window.localStorage.getItem("dmc_role") === "spectator";
       ownerRef.current = ownerDeviceId;
@@ -147,50 +177,65 @@ function RoomRace() {
     };
   }, [ready, params.code, trackParam, lapsParam]);
 
-  // Join the room channel and wire presence + messages.
+  // Join the room channel and run the start protocol: the owner waits for the grid to
+  // assemble (bounded by GRID_WAIT_MS), then broadcasts "go" with a shared wall-clock
+  // startAt; everyone else holds at the grid until it arrives.
   useEffect(() => {
     if (!config || !deviceId) return;
+    const isOwner = deviceId === ownerRef.current;
+
+    const persistHandoff = (at: number) => {
+      saveRaceHandoff(params.code, {
+        trackId: config.trackId,
+        laps: config.laps,
+        grid: gridRef.current ?? [],
+        ownerDeviceId: config.ownerDeviceId,
+        startAt: at,
+      });
+    };
+
+    const applyGrid = (g: GridSlot[]) => {
+      if (gridRef.current && JSON.stringify(gridRef.current) === JSON.stringify(g)) return;
+      gridRef.current = g;
+      setGrid(g);
+    };
+
+    // Owner: broadcast the shared start. Idempotent — repeat calls re-send the same
+    // startAt, so stragglers and reloads converge on one clock.
+    const issueGo = () => {
+      const g = gridRef.current;
+      if (!isOwner || !g) return;
+      const at = goStartAtRef.current ?? Date.now() + GO_LEAD_MS;
+      goStartAtRef.current = at;
+      setStartAt(at);
+      persistHandoff(at);
+      void handleRef.current?.send({ kind: "go", grid: g, startAt: at });
+    };
 
     const bumpOwner = (id: string, patch: Partial<PlayerProgress>) => {
       if (deviceId !== ownerRef.current) return;
       const cur =
         progressMap.current.get(id) ??
-        ({ username: id.slice(0, 4), carName: null, lap: 0, nextGate: 1, finished: false, totalMs: null } as PlayerProgress);
+        ({
+          username: id.slice(0, 4),
+          carName: null,
+          lap: 0,
+          nextGate: 1,
+          finished: false,
+          totalMs: null,
+        } as PlayerProgress);
       progressMap.current.set(id, { ...cur, ...patch });
       const next = computeStandings(progressMap.current, gateCountRef.current);
       setStandings(next);
       handleRef.current?.send({ kind: "standings", entries: next });
     };
 
-    const onPresence = (members: PresenceMeta[]) => {
-      setSpawnIndex((prev) => (prev == null ? slotOf(members, deviceId) : prev));
+    const onPresence = (incoming: PresenceMeta[]) => {
+      setMembers(incoming);
 
-      const others = members.filter((m) => m.role === "player" && m.deviceId !== deviceId);
-      void (async () => {
-        await Promise.all(
-          others.map(async (m) => {
-            if (m.carId && !glbCache.current.has(m.carId)) {
-              try {
-                const { car } = await apiGet<{ car: Car }>(`/api/cars/${m.carId}`);
-                glbCache.current.set(m.carId, car.glbUrl);
-              } catch {
-                glbCache.current.set(m.carId, null);
-              }
-            }
-          }),
-        );
-        setRemotes(
-          others.map((m) => ({
-            deviceId: m.deviceId,
-            glbUrl: m.carId ? glbCache.current.get(m.carId) ?? null : null,
-            spawnIndex: slotOf(members, m.deviceId),
-          })),
-        );
-      })();
-
-      // Owner: seed usernames/car names for the leaderboard.
-      if (deviceId === ownerRef.current) {
-        members
+      if (isOwner) {
+        // Seed usernames/car names for the leaderboard.
+        incoming
           .filter((m) => m.role === "player")
           .forEach((m) => {
             const cur = progressMap.current.get(m.deviceId);
@@ -203,6 +248,15 @@ function RoomRace() {
               totalMs: cur?.totalMs ?? null,
             });
           });
+
+        if (goStartAtRef.current != null) {
+          issueGo(); // re-broadcast so whoever just arrived gets the shared clock
+        } else if (gridRef.current) {
+          const present = new Set(
+            incoming.filter((m) => m.role === "player").map((m) => m.deviceId),
+          );
+          if (gridRef.current.every((s) => present.has(s.deviceId))) issueGo();
+        }
       }
     };
 
@@ -215,6 +269,13 @@ function RoomRace() {
           remoteBuffers.current.set(msg.deviceId, buf);
         }
         pushSnapshot(buf, msg.p, msg.q);
+      } else if (msg.kind === "go") {
+        applyGrid(msg.grid);
+        if (goStartAtRef.current !== msg.startAt) {
+          goStartAtRef.current = msg.startAt;
+          setStartAt(msg.startAt);
+          persistHandoff(msg.startAt);
+        }
       } else if (msg.kind === "standings") {
         setStandings(msg.entries);
       } else if (msg.kind === "progress") {
@@ -235,16 +296,73 @@ function RoomRace() {
     };
     handleRef.current = joinRoom(params.code, meta, { onPresence, onMessage });
 
-    // If presence is slow, don't block the start.
-    const fallback = window.setTimeout(() => setSpawnIndex((v) => v ?? 0), 1500);
+    // Owner: grace window for racers still navigating, then start with whoever is here.
+    const goTimer = isOwner ? window.setTimeout(issueGo, GRID_WAIT_MS) : undefined;
+    // Everyone: no "go" at all (owner gone / never reachable) → race locally.
+    const fallbackTimer = window.setTimeout(() => {
+      if (goStartAtRef.current != null) return;
+      if (!gridRef.current) {
+        gridRef.current = [{ deviceId, slot: 0 }];
+        setGrid(gridRef.current);
+      }
+      const at = Date.now() + GO_LEAD_MS;
+      goStartAtRef.current = at;
+      setStartAt(at);
+    }, NO_GO_FALLBACK_MS);
 
     return () => {
-      clearTimeout(fallback);
+      window.clearTimeout(goTimer);
+      window.clearTimeout(fallbackTimer);
       handleRef.current?.leave();
       handleRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config, deviceId]);
+
+  // Ghost cars for everyone else, spawn slots resolved from the authoritative grid.
+  useEffect(() => {
+    if (!deviceId) return;
+    let cancelled = false;
+    const players = members.filter((m) => m.role === "player");
+    const slots = slotMap(grid ?? [], players.map((m) => m.deviceId));
+    const others = players.filter((m) => m.deviceId !== deviceId);
+    void (async () => {
+      await Promise.all(
+        others.map(async (m) => {
+          if (m.carId && !glbCache.current.has(m.carId)) {
+            try {
+              const { car } = await apiGet<{ car: Car }>(`/api/cars/${m.carId}`);
+              glbCache.current.set(m.carId, car.glbUrl);
+            } catch {
+              glbCache.current.set(m.carId, null);
+            }
+          }
+        }),
+      );
+      if (cancelled) return;
+      setRemotes(
+        others.map((m) => ({
+          deviceId: m.deviceId,
+          glbUrl: m.carId ? glbCache.current.get(m.carId) ?? null : null,
+          spawnIndex: slots.get(m.deviceId) ?? 0,
+        })),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [members, grid, deviceId]);
+
+  // Own spawn slot — null until the grid is known, so the scene never mounts at slot 0
+  // only to teleport later.
+  const spawnIndex = useMemo(() => {
+    if (!grid || !deviceId) return null;
+    const playerIds = new Set(
+      members.filter((m) => m.role === "player").map((m) => m.deviceId),
+    );
+    playerIds.add(deviceId);
+    return slotMap(grid, [...playerIds]).get(deviceId) ?? 0;
+  }, [grid, members, deviceId]);
 
   // Callbacks handed to the scene (fresh each render; used via up-to-date closures).
   const isOwner = deviceId === config?.ownerDeviceId;
@@ -264,7 +382,14 @@ function RoomRace() {
   function applyOwnerProgress(id: string, patch: Partial<PlayerProgress>) {
     const cur =
       progressMap.current.get(id) ??
-      ({ username: id === deviceId ? username : id.slice(0, 4), carName: null, lap: 0, nextGate: 1, finished: false, totalMs: null } as PlayerProgress);
+      ({
+        username: id === deviceId ? username : id.slice(0, 4),
+        carName: null,
+        lap: 0,
+        nextGate: 1,
+        finished: false,
+        totalMs: null,
+      } as PlayerProgress);
     progressMap.current.set(id, { ...cur, ...patch });
     const next = computeStandings(progressMap.current, gateCountRef.current);
     setStandings(next);
@@ -285,6 +410,7 @@ function RoomRace() {
       carGlbUrl={config.glb}
       laps={config.laps}
       spawnIndex={spawnIndex ?? 0}
+      startAt={startAt}
       selfDeviceId={deviceId}
       spectator={config.spectator}
       remotes={remotes}

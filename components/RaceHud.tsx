@@ -13,7 +13,7 @@ export interface RaceResult {
   lapTimes: number[];
 }
 
-type Phase = "countdown" | "racing" | "finished";
+type Phase = "waiting" | "countdown" | "racing" | "finished";
 
 export function formatMs(ms: number): string {
   const total = Math.max(0, ms);
@@ -26,6 +26,7 @@ export function formatMs(ms: number): string {
 export function RaceHud({
   phase,
   countdown,
+  goFlash = false,
   lap,
   totalLaps,
   startAt,
@@ -40,6 +41,8 @@ export function RaceHud({
 }: {
   phase: Phase;
   countdown: number;
+  /** Briefly true right after the start, to flash "GO!". */
+  goFlash?: boolean;
   lap: number;
   totalLaps: number;
   startAt: number | null;
@@ -84,7 +87,7 @@ export function RaceHud({
       )}
 
       {/* Lap + timer */}
-      {!spectator && phase !== "countdown" && (
+      {!spectator && (phase === "racing" || phase === "finished") && (
         <div className="race-metrics pointer-events-none absolute right-4 top-4 z-10 flex flex-col items-end gap-1 font-mono text-white">
           <div className="rounded-md bg-black/45 px-3 py-1.5 text-sm backdrop-blur">
             Lap {Math.min(lap + (phase === "finished" ? 0 : 1), totalLaps)} / {totalLaps}
@@ -101,7 +104,7 @@ export function RaceHud({
       )}
 
       {/* Leaderboard (multiplayer) */}
-      {standings.length > 1 && phase !== "countdown" && (
+      {standings.length > 1 && (phase === "racing" || phase === "finished") && (
         <div className="race-standings pointer-events-none absolute left-4 top-16 z-10 w-56 rounded-lg bg-black/45 p-2 font-mono text-xs text-white backdrop-blur">
           <div className="mb-1 px-1 text-[10px] uppercase tracking-wide text-neutral-400">
             Standings
@@ -125,11 +128,20 @@ export function RaceHud({
         </div>
       )}
 
-      {/* Countdown */}
-      {phase === "countdown" && (
+      {/* Waiting for the shared start */}
+      {phase === "waiting" && (
+        <div className="race-waiting pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+          <div className="animate-pulse rounded-full bg-black/45 px-6 py-3 font-mono text-sm text-white backdrop-blur">
+            Waiting for racers…
+          </div>
+        </div>
+      )}
+
+      {/* Countdown + GO! flash */}
+      {(phase === "countdown" || goFlash) && (
         <div className="race-countdown pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
           <div className="text-8xl font-black text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.6)]">
-            {countdown > 0 ? countdown : "GO!"}
+            {phase === "countdown" && countdown > 0 ? countdown : "GO!"}
           </div>
         </div>
       )}

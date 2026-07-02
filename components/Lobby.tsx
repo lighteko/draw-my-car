@@ -9,6 +9,7 @@ import { usePlayer } from "@/lib/identity";
 import { hasBrowserSupabase } from "@/lib/supabase-browser";
 import { enterFullscreen, isTouchDevice, useAutoFullscreen } from "@/lib/fullscreen";
 import { joinRoom, type RoomHandle } from "@/lib/realtime";
+import { saveRaceHandoff } from "@/lib/raceHandoff";
 import { apiGet, apiPatch } from "@/lib/api";
 import { TRACKS, trackName, resolveTrackId } from "@/lib/tracks";
 import {
@@ -141,8 +142,17 @@ export function Lobby({
               return next;
             });
           }
-          else if (msg.kind === "start")
+          else if (msg.kind === "start") {
+            // Persist the owner-assigned grid so the race page spawns everyone in
+            // their own slot instead of re-deriving slots from a partial presence sync.
+            saveRaceHandoff(code, {
+              trackId: msg.trackId,
+              laps: msg.laps,
+              grid: msg.grid,
+              ownerDeviceId: msg.ownerDeviceId,
+            });
             router.push(`/r/${code}/race?track=${msg.trackId}&laps=${msg.laps}`);
+          }
         },
       },
     );
@@ -197,13 +207,19 @@ export function Lobby({
   const startRace = async () => {
     const resolved = resolveTrackId(settings.trackId);
     const grid: GridSlot[] = players.map((p, i) => ({ deviceId: p.deviceId, slot: i }));
+    saveRaceHandoff(code, {
+      trackId: resolved,
+      laps: settings.laps,
+      grid,
+      ownerDeviceId,
+    });
     // Await the broadcast so it flushes before we navigate away (which closes the channel).
     await handleRef.current?.send({
       kind: "start",
       trackId: resolved,
       laps: settings.laps,
       grid,
-      startAt: Date.now() + 1000,
+      ownerDeviceId,
     });
     apiPatch(`/api/rooms/${code}`, { status: "racing" }).catch(() => {});
     if (isTouchDevice()) await enterFullscreen();

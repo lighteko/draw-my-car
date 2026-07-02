@@ -61,7 +61,11 @@ export interface Standing {
 export type RoomMessage =
   | { kind: "settings"; settings: RaceSettings }
   | { kind: "player_state"; member: PresenceMeta }
-  | { kind: "start"; trackId: string; laps: number; grid: GridSlot[]; startAt: number }
+  // Owner resolved the race config; everyone persists the handoff and navigates.
+  | { kind: "start"; trackId: string; laps: number; grid: GridSlot[]; ownerDeviceId: string }
+  // Owner-issued on the race channel once the grid has formed: the shared wall-clock
+  // instant racing begins. Re-broadcast on presence changes so stragglers catch up.
+  | { kind: "go"; grid: GridSlot[]; startAt: number }
   // High-frequency car pose (kept out of React state; buffered + interpolated).
   | { kind: "transform"; deviceId: string; p: Vec3n; q: Quat }
   // A player's own lap progress, reported to the owner for ranking.

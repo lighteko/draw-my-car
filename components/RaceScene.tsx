@@ -28,14 +28,15 @@ export interface RemoteRacer {
 }
 
 /**
- * RaceScene — a single-player race on a gate track. Client-only (WebGL).
+ * RaceScene — a race on a gate track. Client-only (WebGL).
  *
  * The local car is the raycast VehicleRig; laps are counted by driving through the
- * ordered gates (planar proximity). The state machine is countdown → racing → finished.
- * Multiplayer (remote ghosts + synced standings) is layered on in the next phase.
+ * ordered gates (planar proximity). The state machine is waiting → countdown → racing →
+ * finished, driven by a shared wall-clock `startAt` so multiplayer clients release the
+ * brakes at the same instant. Solo play omits `startAt` and self-schedules a local start.
  */
 
-type Phase = "countdown" | "racing" | "finished";
+type Phase = "waiting" | "countdown" | "racing" | "finished";
 
 interface Progress {
   nextGate: number;
@@ -49,6 +50,7 @@ export function RaceScene({
   carGlbUrl,
   laps,
   spawnIndex = 0,
+  startAt: startAtMs,
   onExit,
   remotes = [],
   remoteBuffers,
@@ -64,6 +66,11 @@ export function RaceScene({
   carGlbUrl: string | null;
   laps: number;
   spawnIndex?: number;
+  /**
+   * Shared wall-clock start (Date.now() epoch, ms). `null` holds everyone at the grid
+   * until the owner's "go" arrives; omit entirely for solo play (local countdown).
+   */
+  startAt?: number | null;
   onExit?: () => void;
   /** Other racers to render as interpolated ghosts. */
   remotes?: RemoteRacer[];
@@ -89,33 +96,56 @@ export function RaceScene({
   const chassisRef = useRef<RapierRigidBody>(null);
   const carAnchor = useRef<THREE.Object3D>(null);
 
-  const [phase, setPhase] = useState<Phase>("countdown");
+  // Solo play (prop omitted): self-schedule a local start so practice keeps its 3-2-1.
+  const [soloStartAt] = useState<number | null>(() =>
+    startAtMs === undefined ? Date.now() + 3200 : null,
+  );
+  const startEpoch = startAtMs ?? soloStartAt;
+
+  const [phase, setPhase] = useState<Phase>(startEpoch == null ? "waiting" : "countdown");
   const [countdown, setCountdown] = useState(3);
+  const [goFlash, setGoFlash] = useState(false);
   const [lap, setLap] = useState(0);
   const [nextGate, setNextGate] = useState(1);
   const [lapTimes, setLapTimes] = useState<number[]>([]);
   const [result, setResult] = useState<RaceResult | null>(null);
-  const [startAt, setStartAt] = useState<number | null>(null);
+  const [raceStartPerf, setRaceStartPerf] = useState<number | null>(null);
 
   const progress = useRef<Progress>({ nextGate: 1, lap: 0, lapStart: 0, lapTimes: [] });
   const emptyBuffers = useRef<Map<string, Snapshot[]>>(new Map());
 
-  // Countdown 3 → 2 → 1 → GO. All transitions run inside timer callbacks (not
-  // synchronously in the effect), and the effect runs once.
+  // Countdown driven by the shared wall clock, so every client releases the brakes at
+  // the same instant regardless of when its page mounted. A very late join (startEpoch
+  // already passed) drops straight into racing with the lap clock backdated to the true
+  // start, keeping its times comparable in the standings.
   useEffect(() => {
-    const timers = [
-      window.setTimeout(() => setCountdown(2), 1000),
-      window.setTimeout(() => setCountdown(1), 2000),
-      window.setTimeout(() => {
-        const now = performance.now();
-        progress.current.lapStart = now;
-        setStartAt(now);
-        setCountdown(0);
-        setPhase("racing");
-      }, 3000),
-    ];
-    return () => timers.forEach((t) => clearTimeout(t));
-  }, []);
+    if (startEpoch == null) return; // waiting for "go"
+    let done = false;
+    const tick = () => {
+      if (done) return;
+      const remaining = startEpoch - Date.now();
+      if (remaining > 0) {
+        setPhase((p) => (p === "waiting" ? "countdown" : p));
+        setCountdown(Math.min(3, Math.ceil(remaining / 1000)));
+        return;
+      }
+      done = true;
+      window.clearInterval(id);
+      const start = performance.now() + remaining; // backdate by the overshoot
+      progress.current.lapStart = start;
+      setRaceStartPerf(start);
+      setCountdown(0);
+      setPhase((p) => (p === "waiting" || p === "countdown" ? "racing" : p));
+      setGoFlash(true);
+      window.setTimeout(() => setGoFlash(false), 900);
+    };
+    const id = window.setInterval(tick, 100);
+    tick();
+    return () => {
+      done = true;
+      window.clearInterval(id);
+    };
+  }, [startEpoch]);
 
   const onGatePass = () => {
     const p = progress.current;
@@ -204,9 +234,10 @@ export function RaceScene({
       <RaceHud
         phase={phase}
         countdown={countdown}
+        goFlash={goFlash}
         lap={lap}
         totalLaps={laps}
-        startAt={startAt}
+        startAt={raceStartPerf}
         running={phase === "racing"}
         lapTimes={lapTimes}
         result={result}
