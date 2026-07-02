@@ -517,6 +517,20 @@ body {
     gap: 0.75rem;
   }
 
+  .lobby-car-card {
+    width: 5.5rem;
+  }
+
+  .lobby-car-card > img,
+  .lobby-car-card > span:first-child {
+    height: 3rem;
+  }
+
+  .lobby-ready {
+    padding: 0.55rem 0.75rem;
+    font-size: 0.75rem;
+  }
+
   .lobby-start {
     padding: 0.7rem 2rem;
     font-size: 0.9rem;

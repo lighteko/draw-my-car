@@ -143,6 +143,7 @@ export function Lobby({
 
   const pickCar = useCallback((id: string) => {
     setCarId(id);
+    setIsReady(false);
     window.localStorage.setItem(ACTIVE_CAR_KEY, id);
   }, []);
 
@@ -272,7 +273,7 @@ export function Lobby({
             {/* Your setup */}
             <section className="lobby-setup game-panel rounded-2xl p-5">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-400">
-                You
+                Your setup
               </h2>
               <div className="mb-3 flex gap-2">
                 <RoleButton active={role === "player"} onClick={() => switchRole("player")}>
@@ -290,32 +291,44 @@ export function Lobby({
                       You have no cars yet — make one in the garage
                     </Link>
                   ) : (
-                    <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-                      {cars.map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => pickCar(c.id)}
-                          className={`whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm ${
-                            carId === c.id
-                              ? "border-cyan-400 bg-cyan-500/20"
-                              : "border-white/15 hover:bg-white/10"
-                          }`}
-                        >
-                          {c.name ?? "Untitled"}
-                        </button>
-                      ))}
+                    <div className="lobby-car-picker mb-3">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold text-white">Choose your race car</span>
+                        {carName && (
+                          <span className="truncate text-xs text-cyan-300">
+                            Selected: {carName}
+                          </span>
+                        )}
+                      </div>
+                      <div
+                        className="lobby-car-options flex snap-x snap-mandatory gap-2 overflow-x-auto pb-2"
+                        role="group"
+                        aria-label="Choose your race car"
+                      >
+                        {cars.map((c) => (
+                          <CarPickerCard
+                            key={c.id}
+                            car={c}
+                            selected={carId === c.id}
+                            onClick={() => pickCar(c.id)}
+                          />
+                        ))}
+                      </div>
                     </div>
                   )}
                   <button
                     type="button"
                     disabled={!carId}
                     onClick={() => setIsReady((r) => !r)}
-                    className={`w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                    className={`lobby-ready w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
                       isReady ? "bg-cyan-600 hover:bg-cyan-500" : "bg-white/10 hover:bg-white/20"
                     }`}
                   >
-                    {isReady ? "Ready ✓" : "Ready up"}
+                    {isReady
+                      ? `Ready with ${carName ?? "selected car"} ✓`
+                      : carName
+                        ? `Confirm ${carName} & ready up`
+                        : "Choose a car to ready up"}
                   </button>
                 </>
               )}
@@ -434,6 +447,46 @@ function RoleButton({
       }`}
     >
       {children}
+    </button>
+  );
+}
+
+function CarPickerCard({
+  car,
+  selected,
+  onClick,
+}: {
+  car: Car;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const name = car.name ?? "Untitled";
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      aria-label={`${name}${selected ? ", selected" : ""}`}
+      onClick={onClick}
+      className={`lobby-car-card relative w-28 shrink-0 snap-start overflow-hidden rounded-xl border text-left transition ${
+        selected
+          ? "border-cyan-300 bg-cyan-500/20 ring-2 ring-cyan-400/35"
+          : "border-white/15 bg-black/25 hover:border-white/40 hover:bg-white/10"
+      }`}
+    >
+      {car.renderUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={car.renderUrl} alt="" className="h-16 w-full object-cover" />
+      ) : (
+        <span className="flex h-16 items-center justify-center bg-white/5 font-heading text-2xl font-bold text-white/60">
+          {name.charAt(0).toUpperCase()}
+        </span>
+      )}
+      {selected && (
+        <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-cyan-300 text-xs font-black text-cyan-950 shadow">
+          ✓
+        </span>
+      )}
+      <span className="block truncate px-2 py-1.5 text-xs font-medium">{name}</span>
     </button>
   );
 }
