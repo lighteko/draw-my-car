@@ -33,8 +33,13 @@ const SUSPENSION_STIFFNESS = 28;
 const SUSPENSION_COMPRESSION = 0.82;
 const SUSPENSION_RELAXATION = 0.88;
 const MAX_SUSPENSION_TRAVEL = 0.25;
-const FRICTION_SLIP = 2.5;
-const SIDE_FRICTION = 0.6;
+const FRICTION_SLIP = 5;
+const SIDE_FRICTION = 1.0;
+
+// Share of the chassis mass packed into a thin plate at the floor of the hull.
+// Rapier combines collider mass properties, so this pulls the centre of mass
+// below the cuboid's centroid and resists rollovers under hard cornering.
+const BALLAST_RATIO = 0.6;
 
 const DOWN = { x: 0, y: -1, z: 0 };
 const AXLE = { x: -1, y: 0, z: 0 };
@@ -183,7 +188,12 @@ export function VehicleRig({
       ccd
       type="dynamic"
     >
-      <CuboidCollider args={[hx, hy, hz]} mass={rig.chassisMass} />
+      <CuboidCollider args={[hx, hy, hz]} mass={rig.chassisMass * (1 - BALLAST_RATIO)} />
+      <CuboidCollider
+        args={[hx * 0.8, hy * 0.1, hz * 0.8]}
+        position={[0, -hy * 0.85, 0]}
+        mass={rig.chassisMass * BALLAST_RATIO}
+      />
       {anchorRef ? <object3D ref={anchorRef} /> : null}
 
       {visual ?? (
