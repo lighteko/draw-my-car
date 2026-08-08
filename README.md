@@ -2,7 +2,7 @@
 
 An interactive web app that converts simple car drawings into a real 3D model that drives
 in a simulated environment. Single-image-to-3D (AI) fills in everything the user didn't draw.
-
+ 
 ## Status: v0 (runnable skeleton)
 
 v0 proves the hard, fun part — driving — and lays down clean seams for the AI pipeline.
