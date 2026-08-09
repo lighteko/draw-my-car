@@ -100,6 +100,12 @@ export default function Home() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            href="/admin/maps"
+            className="btn-ghost hidden px-3 py-2 text-[10px] sm:inline-flex"
+          >
+            Map lab
+          </Link>
           <div className="game-panel hidden items-center gap-2 rounded-full px-4 py-2 text-sm sm:flex">
             <span className="text-cyan-300">◈</span> {count} car{count === 1 ? "" : "s"}
           </div>

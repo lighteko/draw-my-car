@@ -36,6 +36,8 @@ export function RaceHud({
   standings = [],
   selfDeviceId,
   spectator = false,
+  freeDrive = false,
+  wrongWay = false,
   exitLabel = "Done",
   onExit,
 }: {
@@ -52,6 +54,10 @@ export function RaceHud({
   standings?: Standing[];
   selfDeviceId?: string;
   spectator?: boolean;
+  /** Free-drive maps have no checkpoints, laps, or results. */
+  freeDrive?: boolean;
+  /** True while the car is driving away from its next gate. */
+  wrongWay?: boolean;
   exitLabel?: string;
   onExit?: () => void;
 }) {
@@ -87,7 +93,7 @@ export function RaceHud({
       )}
 
       {/* Lap + timer */}
-      {!spectator && (phase === "racing" || phase === "finished") && (
+      {!spectator && !freeDrive && (phase === "racing" || phase === "finished") && (
         <div className="race-metrics pointer-events-none absolute right-4 top-4 z-10 flex flex-col items-end gap-1 font-mono text-white">
           <div className="rounded-md bg-black/45 px-3 py-1.5 text-sm backdrop-blur">
             Lap {Math.min(lap + (phase === "finished" ? 0 : 1), totalLaps)} / {totalLaps}
@@ -125,6 +131,15 @@ export function RaceHud({
               </li>
             ))}
           </ol>
+        </div>
+      )}
+
+      {/* Wrong way */}
+      {!spectator && phase === "racing" && wrongWay && (
+        <div className="race-wrongway pointer-events-none absolute left-1/2 top-[22%] z-10 -translate-x-1/2">
+          <div className="animate-pulse rounded-lg bg-red-600/85 px-5 py-2 text-2xl font-black tracking-wider text-white shadow-lg">
+            WRONG WAY
+          </div>
         </div>
       )}
 

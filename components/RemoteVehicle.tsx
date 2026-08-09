@@ -18,8 +18,9 @@ import type { Quat, Vec3n } from "@/lib/roomTypes";
  *
  * Incoming poses are buffered (tagged with local receive time) and applied ~100 ms in the
  * past, interpolating between the two surrounding snapshots (local time sidesteps clock
- * skew). The car is a kinematic-position body so the local dynamic car feels bumps against
- * it (one-directional — the ghost is unaffected, so there's no authority conflict).
+ * skew). The collider is a sensor: because the ghost's pose lags real time, letting it
+ * shunt the local car reads as an unfair, uncounterable hit — so remote cars are pure
+ * visuals you can drive through.
  */
 
 export interface Snapshot {
@@ -90,10 +91,10 @@ export function RemoteVehicle({
       ref={bodyRef}
       type="kinematicPosition"
       colliders={false}
-      position={[spawn.position[0], 1.2, spawn.position[2]]}
+      position={[spawn.position[0], spawn.position[1] + 1.2, spawn.position[2]]}
       rotation={[0, spawn.rotationY, 0]}
     >
-      <CuboidCollider args={[0.9, 0.5, 1.9]} />
+      <CuboidCollider args={[0.9, 0.5, 1.9]} sensor />
       {glbUrl ? (
         <Suspense fallback={null}>
           <RemoteModel url={glbUrl} />

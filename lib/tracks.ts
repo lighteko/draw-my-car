@@ -7,6 +7,9 @@
  * the spawn grid are derived from the gate path so tracks are defined by positions alone.
  */
 
+import type { VehicleTuning } from "@/lib/vehicleTuning";
+import type { GraphicsSettings } from "@/lib/graphicsSettings";
+
 export type Vec3 = [number, number, number];
 
 export interface Gate {
@@ -44,11 +47,18 @@ export interface TrackDef extends TrackMeta {
   spawns: SpawnPoint[];
   decorations: Decoration[];
   defaultLaps: number;
+  /** Optional uploaded GLB environment rendered with fixed mesh collision. */
+  modelUrl?: string | null;
+  modelScale?: number;
+  /** Vehicle settings saved from the admin test panel; merged over the defaults. */
+  tuning?: Partial<VehicleTuning>;
+  /** Scene lighting/environment saved from the admin graphics panel; merged over the defaults. */
+  graphics?: Partial<GraphicsSettings>;
+  createdAt?: number;
 }
 
 const GATE_WIDTH = 5;
 const GRID_BACK = 7; // how far behind gate 0 the front row spawns
-const GATE_RADIUS = GATE_WIDTH; // planar lap-trigger radius
 
 function sub(a: Vec3, b: Vec3): Vec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -87,7 +97,7 @@ function makeSpawns(points: Vec3[], count = 8): SpawnPoint[] {
     spawns.push({
       position: [
         points[0][0] - into[0] * back + lateral[0] * lane,
-        0,
+        points[0][1],
         points[0][2] - into[2] * back + lateral[2] * lane,
       ],
       rotationY: yaw,
@@ -112,6 +122,67 @@ function buildTrack(
     spawns: makeSpawns(points),
     decorations,
     defaultLaps: meta.defaultLaps ?? 3,
+  };
+}
+
+/** A checkpoint exactly as the admin authored it: the car's pose when it was dropped. */
+export interface AuthoredCheckpoint {
+  position: Vec3;
+  rotationY: number;
+}
+
+/**
+ * Rebuild the ordered gate loop + spawn grid from admin-authored checkpoints.
+ *
+ * Gate positions AND headings are taken verbatim from what was authored — the heading is NOT
+ * re-derived from the loop tangent (which mangles it when the driven path isn't a clean closed
+ * loop). Only the spawn grid is derived, from the checkpoint positions. Empty input collapses
+ * the map back to free drive with a single origin spawn.
+ */
+export function makeCheckpointGeometry(checkpoints: AuthoredCheckpoint[]): {
+  gates: Gate[];
+  spawns: SpawnPoint[];
+} {
+  if (checkpoints.length === 0) {
+    return { gates: [], spawns: [{ position: [0, 0, 0], rotationY: 0 }] };
+  }
+  const gates: Gate[] = checkpoints.map((cp) => ({
+    position: cp.position,
+    rotationY: cp.rotationY,
+    width: GATE_WIDTH,
+  }));
+  return { gates, spawns: makeSpawns(checkpoints.map((cp) => cp.position)) };
+}
+
+/** Build a track from admin-authored checkpoint positions. */
+export function createTrackDefinition(
+  meta: TrackMeta & {
+    groundColor: string;
+    accent: string;
+    skyColor: string;
+    defaultLaps: number;
+    modelUrl?: string | null;
+    modelScale?: number;
+    createdAt?: number;
+  },
+  points: Vec3[],
+): TrackDef {
+  if (points.length === 0) {
+    return {
+      ...meta,
+      gates: [],
+      spawns: [{ position: [0, 0, 0], rotationY: 0 }],
+      decorations: [],
+      modelUrl: meta.modelUrl ?? null,
+      modelScale: meta.modelScale ?? 1,
+      createdAt: meta.createdAt,
+    };
+  }
+  return {
+    ...buildTrack(meta, points),
+    modelUrl: meta.modelUrl ?? null,
+    modelScale: meta.modelScale ?? 1,
+    createdAt: meta.createdAt,
   };
 }
 
@@ -194,10 +265,12 @@ const HARBOR = buildTrack(
 
 export const TRACKS: TrackDef[] = [SUNSET, DUST, HARBOR];
 
-export const GATE_TRIGGER_RADIUS = GATE_RADIUS;
-
 export function getTrack(id: string): TrackDef {
   return TRACKS.find((t) => t.id === id) ?? TRACKS[0];
+}
+
+export function findBuiltInTrack(id: string): TrackDef | undefined {
+  return TRACKS.find((track) => track.id === id);
 }
 
 export function trackName(id: string): string {
