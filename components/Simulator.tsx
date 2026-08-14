@@ -283,13 +283,16 @@ function Wall({
 
 /**
  * ChaseCamera — follows the chassis from behind (-forward) and above, smoothed.
- * Reads the body transform directly; manipulates the default R3F camera.
+ * Reads the body transform directly; manipulates the default R3F camera. The heading
+ * is flattened onto the ground plane (ramps don't pitch the camera into the floor)
+ * and FOV/distance stretch with speed for a sense of pace.
  */
 function ChaseCamera({ target }: { target: RefObject<RapierRigidBody | null> }) {
   const { camera } = useThree();
   const carPos = useMemo(() => new THREE.Vector3(), []);
   const carQuat = useMemo(() => new THREE.Quaternion(), []);
   const forward = useMemo(() => new THREE.Vector3(), []);
+  const lastForward = useMemo(() => new THREE.Vector3(0, 0, 1), []);
   const desired = useMemo(() => new THREE.Vector3(), []);
   const lookAt = useMemo(() => new THREE.Vector3(), []);
   const up = useMemo(() => new THREE.Vector3(0, 1, 0), []);
@@ -299,12 +302,25 @@ function ChaseCamera({ target }: { target: RefObject<RapierRigidBody | null> }) 
     if (!body) return;
     const t = body.translation();
     const r = body.rotation();
+    const v = body.linvel();
     carPos.set(t.x, t.y, t.z);
     carQuat.set(r.x, r.y, r.z, r.w);
-    forward.set(0, 0, 1).applyQuaternion(carQuat); // car forward = +Z
+    forward.set(0, 0, 1).applyQuaternion(carQuat).setY(0); // car forward = +Z, flattened
+    if (forward.lengthSq() < 1e-4) {
+      forward.copy(lastForward);
+    } else {
+      forward.normalize();
+      lastForward.copy(forward);
+    }
 
-    // Behind the car (-forward) and above (+up). Method-call mutation only.
-    desired.copy(carPos).addScaledVector(forward, -8).addScaledVector(up, 4);
+    const speedT = THREE.MathUtils.clamp(Math.hypot(v.x, v.z) / 30, 0, 1);
+    const dist = 8 + 2 * speedT;
+    desired.copy(carPos).addScaledVector(forward, -dist).addScaledVector(up, 4 + 0.6 * speedT);
+
+    // Snap across reset teleports instead of flying the damped camera through the map.
+    if (camera.position.distanceTo(desired) > 30) {
+      camera.position.copy(desired);
+    }
 
     const lambda = 4;
     camera.position.set(
@@ -315,7 +331,23 @@ function ChaseCamera({ target }: { target: RefObject<RapierRigidBody | null> }) 
 
     lookAt.copy(carPos).addScaledVector(up, 0.8);
     camera.lookAt(lookAt);
+
+    const cam = camera as THREE.PerspectiveCamera;
+    if (cam.isPerspectiveCamera) {
+      const targetFov = 60 + 13 * speedT * speedT;
+      setCameraFov(cam, THREE.MathUtils.damp(cam.fov, targetFov, 3, dt));
+    }
   });
 
   return null;
+}
+
+/**
+ * Drive a PerspectiveCamera's fov through setFocalLength (which assigns .fov and
+ * refreshes the projection matrix) — method-call mutation only, per the lint rules.
+ */
+function setCameraFov(cam: THREE.PerspectiveCamera, fov: number): void {
+  if (Math.abs(fov - cam.fov) < 0.01) return;
+  const focal = (0.5 * cam.getFilmHeight()) / Math.tan(THREE.MathUtils.degToRad(fov) / 2);
+  cam.setFocalLength(focal);
 }

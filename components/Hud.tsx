@@ -55,7 +55,7 @@ export function Hud({ bodyRef }: { bodyRef: RefObject<RapierRigidBody | null> })
           <kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd> steer
         </div>
         <div>
-          <kbd>Space</kbd> brake &nbsp;·&nbsp; <kbd>R</kbd> reset
+          <kbd>Space</kbd> brake / drift &nbsp;·&nbsp; <kbd>R</kbd> reset
         </div>
       </div>
     </div>

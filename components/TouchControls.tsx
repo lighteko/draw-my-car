@@ -12,7 +12,19 @@ import { resetTouchInput, setTiltEnabled, setTiltSteer, setTouchInput } from "@/
  *
  * Only renders on touch / coarse-pointer devices. Tilt needs a user gesture on iOS
  * (DeviceOrientationEvent.requestPermission), which the scheme toggle provides.
+ *
+ * Each button tracks its own held state and the merged input is recomputed on every
+ * change (like the keyboard's pressed-set) — a plain last-writer-wins store would
+ * zero the throttle when a second, overlapping finger lifts.
  */
+
+interface HeldButtons {
+  left: boolean;
+  right: boolean;
+  gas: boolean;
+  reverse: boolean;
+  brake: boolean;
+}
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
@@ -28,6 +40,23 @@ export function TouchControls() {
   );
   const [scheme, setScheme] = useState<"gui" | "tilt">("gui");
   const neutralRef = useRef<number | null>(null);
+  const heldRef = useRef<HeldButtons>({
+    left: false,
+    right: false,
+    gas: false,
+    reverse: false,
+    brake: false,
+  });
+
+  const setHeld = useCallback((key: keyof HeldButtons, down: boolean) => {
+    const h = heldRef.current;
+    h[key] = down;
+    setTouchInput({
+      steer: (h.left ? 1 : 0) + (h.right ? -1 : 0),
+      throttle: (h.gas ? 1 : 0) + (h.reverse ? -1 : 0),
+      brake: h.brake,
+    });
+  }, []);
 
   const onOrientation = useCallback((e: DeviceOrientationEvent) => {
     // In landscape the roll axis is beta; in portrait it's gamma.
@@ -90,15 +119,15 @@ export function TouchControls() {
         <div className="touch-steering absolute flex gap-3">
           <HoldButton
             label="Steer left"
-            onHold={() => setTouchInput({ steer: 1 })}
-            onRelease={() => setTouchInput({ steer: 0 })}
+            onHold={() => setHeld("left", true)}
+            onRelease={() => setHeld("left", false)}
           >
             ‹
           </HoldButton>
           <HoldButton
             label="Steer right"
-            onHold={() => setTouchInput({ steer: -1 })}
-            onRelease={() => setTouchInput({ steer: 0 })}
+            onHold={() => setHeld("right", true)}
+            onRelease={() => setHeld("right", false)}
           >
             ›
           </HoldButton>
@@ -109,16 +138,24 @@ export function TouchControls() {
       <div className="touch-pedals absolute flex items-end gap-3">
         <HoldButton
           label="Reverse"
-          onHold={() => setTouchInput({ throttle: -1 })}
-          onRelease={() => setTouchInput({ throttle: 0 })}
+          onHold={() => setHeld("reverse", true)}
+          onRelease={() => setHeld("reverse", false)}
         >
           ▼
         </HoldButton>
         <HoldButton
+          label="Brake / drift"
+          variant="brake"
+          onHold={() => setHeld("brake", true)}
+          onRelease={() => setHeld("brake", false)}
+        >
+          ✋
+        </HoldButton>
+        <HoldButton
           label="Accelerate"
           accent
-          onHold={() => setTouchInput({ throttle: 1 })}
-          onRelease={() => setTouchInput({ throttle: 0 })}
+          onHold={() => setHeld("gas", true)}
+          onRelease={() => setHeld("gas", false)}
         >
           ▲
         </HoldButton>
@@ -162,14 +199,21 @@ function HoldButton({
   onRelease,
   label,
   accent = false,
+  variant,
   children,
 }: {
   onHold: () => void;
   onRelease: () => void;
   label: string;
   accent?: boolean;
+  variant?: "brake";
   children: ReactNode;
 }) {
+  const look = accent
+    ? "border-cyan-300/60 bg-cyan-500/30 text-cyan-100 shadow-[0_0_24px_rgba(34,211,238,0.4)]"
+    : variant === "brake"
+      ? "border-amber-300/60 bg-amber-500/25 text-amber-100"
+      : "border-white/20 bg-white/12 text-white/90";
   return (
     <button
       type="button"
@@ -181,11 +225,7 @@ function HoldButton({
       }}
       onPointerUp={onRelease}
       onPointerCancel={onRelease}
-      className={`touch-hold pointer-events-auto flex h-[5.5rem] w-[5.5rem] touch-none items-center justify-center rounded-full border text-4xl leading-none backdrop-blur transition active:brightness-125 ${
-        accent
-          ? "border-cyan-300/60 bg-cyan-500/30 text-cyan-100 shadow-[0_0_24px_rgba(34,211,238,0.4)]"
-          : "border-white/20 bg-white/12 text-white/90"
-      }`}
+      className={`touch-hold pointer-events-auto flex h-[5.5rem] w-[5.5rem] touch-none items-center justify-center rounded-full border text-4xl leading-none backdrop-blur transition active:brightness-125 ${look}`}
     >
       {children}
     </button>

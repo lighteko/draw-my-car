@@ -2,7 +2,7 @@
 
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { resolveTrackId } from "@/lib/tracks";
+import { findBuiltInTrack, resolveTrackId, type TrackDef } from "@/lib/tracks";
 import { apiGet } from "@/lib/api";
 import { RaceSceneClient } from "@/components/RaceSceneClient";
 import type { Car } from "@/lib/cars";
@@ -35,12 +35,25 @@ function Practice() {
   const router = useRouter();
 
   const laps = Number(search.get("laps")) || 3;
-  const [config, setConfig] = useState<{ trackId: string; glb: string | null } | null>(null);
+  const [config, setConfig] = useState<{
+    trackId: string;
+    track?: TrackDef;
+    glb: string | null;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const trackId = resolveTrackId(params.trackId);
+      let track = findBuiltInTrack(trackId);
+      if (!track) {
+        try {
+          const result = await apiGet<{ map: TrackDef }>(`/api/maps/${trackId}`);
+          track = result.map;
+        } catch {
+          track = findBuiltInTrack(resolveTrackId("random"));
+        }
+      }
       const carId = search.get("car") ?? window.localStorage.getItem(ACTIVE_CAR_KEY);
       let glb: string | null = null;
       if (carId) {
@@ -51,7 +64,7 @@ function Practice() {
           /* fall back to placeholder car */
         }
       }
-      if (!cancelled) setConfig({ trackId, glb });
+      if (!cancelled) setConfig({ trackId: track?.id ?? trackId, track, glb });
     })();
     return () => {
       cancelled = true;
@@ -69,10 +82,12 @@ function Practice() {
   return (
     <RaceSceneClient
       trackId={config.trackId}
+      track={config.track}
+      adminMode={Boolean(config.track?.modelUrl)}
       carGlbUrl={config.glb}
       laps={laps}
-      onExit={() => router.push("/")}
-      exitLabel="Back to garage"
+      onExit={() => router.push(config.track?.modelUrl ? "/admin/maps" : "/")}
+      exitLabel={config.track?.modelUrl ? "Back to map lab" : "Back to garage"}
     />
   );
 }

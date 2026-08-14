@@ -35,7 +35,7 @@ export interface RigSpec {
 
 const PLACEHOLDER_RIG: RigSpec = {
   chassisHalfExtents: [0.9, 0.4, 1.9],
-  chassisMass: 150,
+  chassisMass: 1200,
   wheels: [
     { position: [0.85, -0.25, 1.25], radius: 0.38, width: 0.3, isSteering: true, isDriven: false },
     { position: [-0.85, -0.25, 1.25], radius: 0.38, width: 0.3, isSteering: true, isDriven: false },
@@ -229,7 +229,7 @@ export function deriveRigFromObject(object: Object3D): RigSpec {
         clamp(size.y * 0.28, 0.25, 0.9),
         clamp(size.z * 0.42, 0.9, 2.6),
       ],
-      chassisMass: 150,
+      chassisMass: 1200,
       wheels: classified,
     };
   }
@@ -249,7 +249,7 @@ export function deriveRigFromObject(object: Object3D): RigSpec {
 
   return {
     chassisHalfExtents: [hx, hy, hz],
-    chassisMass: 150,
+    chassisMass: 1200,
     wheels: [
       { position: [trackX, connectionY, axleZ], radius, width, isSteering: true, isDriven: false },
       { position: [-trackX, connectionY, axleZ], radius, width, isSteering: true, isDriven: false },
