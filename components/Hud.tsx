@@ -43,19 +43,19 @@ export function Hud({ bodyRef }: { bodyRef: RefObject<RapierRigidBody | null> })
       {/* Controls help */}
       <div className="sim-help absolute bottom-6 left-6 rounded-xl bg-black/55 px-4 py-3 font-mono text-xs leading-relaxed text-white backdrop-blur">
         <div className="mb-1 font-semibold uppercase tracking-wide opacity-70">
-          Controls
+          조작법
         </div>
         <div>
-          <kbd>W</kbd> / <kbd>↑</kbd> throttle
+          <kbd>W</kbd> / <kbd>↑</kbd> 전진
         </div>
         <div>
-          <kbd>S</kbd> / <kbd>↓</kbd> reverse
+          <kbd>S</kbd> / <kbd>↓</kbd> 후진
         </div>
         <div>
-          <kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd> steer
+          <kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd>조향
         </div>
         <div>
-          <kbd>Space</kbd> brake / drift &nbsp;·&nbsp; <kbd>R</kbd> reset
+          <kbd>Space</kbd> 브레이크 / 드리프트 &nbsp;·&nbsp; <kbd>R</kbd> 리셋
         </div>
       </div>
     </div>

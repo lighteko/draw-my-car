@@ -2,11 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DrawCanvas } from "./DrawCanvas";
+import { PhotoPicker } from "./PhotoPicker";
 import { apiGet, apiPost } from "@/lib/api";
 import type { Car } from "@/lib/cars";
 
 /**
- * CreateCarModal — draw a car and get a 3D model back in one continuous step.
+ * CreateCarModal — hand in a car and get a 3D model back in one continuous step.
+ *
+ * How you hand it in depends on the device: a pointer gets the drawing canvas, a phone gets
+ * the camera. Finger-drawing inside a phone-sized dialog is the worst version of both.
  *
  * The two-stage pipeline (render, then build) is hidden: as soon as the fast 3/4 render
  * comes back we show it as *living loading art* (a floating, shimmering preview with
@@ -30,11 +34,11 @@ interface JobStatusResponse {
 }
 
 const STAGES = [
-  "Sketching the chassis…",
-  "Pressing the body panels…",
-  "Mounting the wheels…",
-  "Spraying a fresh coat…",
-  "Tightening the last bolts…",
+  "차대를 그리는 중…",
+  "차체 패널을 찍어내는 중…",
+  "바퀴를 끼우는 중…",
+  "도색을 입히는 중…",
+  "마지막 볼트를 조이는 중…",
 ];
 
 export function CreateCarModal({
@@ -51,6 +55,15 @@ export function CreateCarModal({
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stage, setStage] = useState(0);
+  /**
+   * Decided once on mount: this drives which input the dialog offers. The test is the
+   * pointer media query, not `ontouchstart` — plenty of desktop browsers expose touch events
+   * on hardware nobody draws with a finger on, and those users should still get the canvas.
+   * A phone is "primary input is coarse", which is exactly what this asks.
+   */
+  const [touch] = useState(
+    () => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches,
+  );
 
   // Cycle the staged copy while the model builds.
   useEffect(() => {
@@ -68,7 +81,7 @@ export function CreateCarModal({
 
   const generate = useCallback(async () => {
     if (!image.current) {
-      setError("Draw or upload a car first.");
+      setError(touch ? "먼저 사진을 골라 주세요." : "먼저 차를 그리거나 이미지를 올려 주세요.");
       return;
     }
     setError(null);
@@ -97,15 +110,15 @@ export function CreateCarModal({
           onCreated(car);
           return;
         }
-        if (status.status === "failed") throw new Error(status.error ?? "generation failed");
+        if (status.status === "failed") throw new Error(status.error ?? "생성에 실패했습니다");
         await new Promise((r) => setTimeout(r, 2000));
       }
-      throw new Error("timed out building your car");
+      throw new Error("차를 만드는 데 시간이 너무 오래 걸렸습니다");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "something went wrong");
+      setError(e instanceof Error ? e.message : "문제가 발생했습니다");
       setPhase("error");
     }
-  }, [onCreated, showRender]);
+  }, [onCreated, showRender, touch]);
 
   const working = phase === "working";
 
@@ -114,14 +127,14 @@ export function CreateCarModal({
       <div className="create-car-dialog game-panel relative flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl text-white">
         <header className="create-car-header flex items-center justify-between border-b border-white/10 px-5 py-4">
           <h2 className="font-heading text-lg font-bold uppercase tracking-wide">
-            {phase === "draw" ? "Draw your car" : "Building your car"}
+            {phase === "draw" ? (touch ? "차 사진 올리기" : "차 그리기") : "차 만드는 중"}
           </h2>
           {!working && (
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md px-2 py-1 text-neutral-400 transition hover:bg-white/10 hover:text-white"
-              aria-label="Close"
+              className="touch-target flex items-center justify-center rounded-md px-2 py-1 text-[#d9c193]/70 transition hover:bg-white/10 hover:text-white"
+              aria-label="닫기"
             >
               ✕
             </button>
@@ -131,7 +144,11 @@ export function CreateCarModal({
         <div className="create-car-body flex-1 overflow-y-auto p-5">
           {phase === "draw" && (
             <>
-              <DrawCanvas onChange={(dataUrl) => (image.current = dataUrl)} />
+              {touch ? (
+                <PhotoPicker onChange={(dataUrl) => (image.current = dataUrl)} />
+              ) : (
+                <DrawCanvas onChange={(dataUrl) => (image.current = dataUrl)} />
+              )}
               {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
             </>
           )}
@@ -144,7 +161,7 @@ export function CreateCarModal({
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={renderUrl}
-                      alt="your car coming to life"
+                      alt="완성되어 가는 내 차"
                       className="create-car-preview aspect-square w-64 rounded-xl object-contain"
                     />
                   ) : (
@@ -159,12 +176,12 @@ export function CreateCarModal({
                 <p className="text-base font-medium">{STAGES[stage]}</p>
                 <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                   <div
-                    className="h-full rounded-full bg-cyan-500 transition-all duration-700"
+                    className="h-full rounded-full bg-amber-500 transition-all duration-700"
                     style={{ width: `${Math.round((progress ?? 0.08) * 100)}%` }}
                   />
                 </div>
                 <p className="mt-2 text-xs text-neutral-400">
-                  This can take a minute — your sketch is turning into a real 3D model.
+                  1분 정도 걸릴 수 있어요 — 그림이 진짜 3D 모델로 바뀌는 중입니다.
                 </p>
               </div>
             </div>
@@ -178,7 +195,7 @@ export function CreateCarModal({
                 onClick={() => setPhase("draw")}
                 className="rounded-lg border border-white/20 px-4 py-2 text-sm font-medium hover:bg-white/10"
               >
-                Try again
+                다시 시도
               </button>
             </div>
           )}
@@ -189,12 +206,12 @@ export function CreateCarModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-neutral-300 hover:bg-white/10"
+              className="touch-target rounded-lg px-4 py-2 text-sm font-medium text-[#d9c193]/80 hover:bg-white/10"
             >
-              Cancel
+              취소
             </button>
             <button type="button" onClick={generate} className="btn-race px-6 py-2.5 text-sm">
-              Bring it to life
+              차로 만들기
             </button>
           </footer>
         )}
@@ -205,6 +222,6 @@ export function CreateCarModal({
 
 function Spinner() {
   return (
-    <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-cyan-400" />
+    <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-amber-400" />
   );
 }

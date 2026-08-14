@@ -12,8 +12,8 @@ import dynamic from "next/dynamic";
 const Simulator = dynamic(() => import("./Simulator"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full w-full items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
-      Loading simulator…
+    <div className="flex h-full w-full items-center justify-center bg-[#17110b] font-mono text-sm text-[#d9c193]/70">
+      시뮬레이터 불러오는 중…
     </div>
   ),
 });

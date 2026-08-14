@@ -118,14 +118,14 @@ export function TouchControls() {
       {scheme === "gui" && (
         <div className="touch-steering absolute flex gap-3">
           <HoldButton
-            label="Steer left"
+            label="좌회전"
             onHold={() => setHeld("left", true)}
             onRelease={() => setHeld("left", false)}
           >
             ‹
           </HoldButton>
           <HoldButton
-            label="Steer right"
+            label="우회전"
             onHold={() => setHeld("right", true)}
             onRelease={() => setHeld("right", false)}
           >
@@ -137,14 +137,14 @@ export function TouchControls() {
       {/* Pedals */}
       <div className="touch-pedals absolute flex items-end gap-3">
         <HoldButton
-          label="Reverse"
+          label="후진"
           onHold={() => setHeld("reverse", true)}
           onRelease={() => setHeld("reverse", false)}
         >
           ▼
         </HoldButton>
         <HoldButton
-          label="Brake / drift"
+          label="브레이크 / 드리프트"
           variant="brake"
           onHold={() => setHeld("brake", true)}
           onRelease={() => setHeld("brake", false)}
@@ -152,7 +152,7 @@ export function TouchControls() {
           ✋
         </HoldButton>
         <HoldButton
-          label="Accelerate"
+          label="가속"
           accent
           onHold={() => setHeld("gas", true)}
           onRelease={() => setHeld("gas", false)}
@@ -163,13 +163,13 @@ export function TouchControls() {
 
       {/* Scheme toggle + reset + recenter */}
       <div className="touch-tools absolute left-1/2 flex -translate-x-1/2 gap-2">
-        <PillButton onClick={toggleScheme}>{scheme === "gui" ? "Tilt: off" : "Tilt: on"}</PillButton>
+        <PillButton onClick={toggleScheme}>{scheme === "gui" ? "기울기: 꺼짐" : "기울기: 켜짐"}</PillButton>
         {scheme === "tilt" && (
           <PillButton onClick={() => (neutralRef.current = null)}>Recenter</PillButton>
         )}
         <button
           type="button"
-          aria-label="Reset car"
+          aria-label="차량 리셋"
           onPointerDown={() => setTouchInput({ reset: true })}
           onPointerUp={() => setTouchInput({ reset: false })}
           onPointerCancel={() => setTouchInput({ reset: false })}
@@ -210,7 +210,7 @@ function HoldButton({
   children: ReactNode;
 }) {
   const look = accent
-    ? "border-cyan-300/60 bg-cyan-500/30 text-cyan-100 shadow-[0_0_24px_rgba(34,211,238,0.4)]"
+    ? "border-amber-300/60 bg-amber-500/30 text-amber-100 shadow-[0_0_24px_rgba(224,168,78,0.4)]"
     : variant === "brake"
       ? "border-amber-300/60 bg-amber-500/25 text-amber-100"
       : "border-white/20 bg-white/12 text-white/90";

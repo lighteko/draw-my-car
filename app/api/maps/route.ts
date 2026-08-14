@@ -36,7 +36,7 @@ export async function GET(): Promise<NextResponse> {
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!(await isAdminAuthorized())) {
-    return NextResponse.json({ error: "admin sign-in required" }, { status: 401 });
+    return NextResponse.json({ error: "관리자 로그인이 필요합니다" }, { status: 401 });
   }
   try {
     const form = await req.formData();
@@ -46,19 +46,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const modelFile = form.get("model");
     const remoteModelUrl = String(form.get("modelUrl") ?? "").trim();
 
-    if (!name) return NextResponse.json({ error: "Map name is required" }, { status: 400 });
+    if (!name) return NextResponse.json({ error: "맵 이름을 입력하세요" }, { status: 400 });
     if (points.length > 0 && points.length < 3) {
-      return NextResponse.json({ error: "Use either no checkpoints or at least three" }, { status: 400 });
+      return NextResponse.json({ error: "체크포인트는 없거나 3개 이상이어야 합니다" }, { status: 400 });
     }
 
     let modelUrl = remoteModelUrl;
     if (modelFile instanceof File && modelFile.size > 0) {
       if (modelFile.size > MAX_MODEL_BYTES) {
-        return NextResponse.json({ error: "GLB must be 50 MB or smaller" }, { status: 413 });
+        return NextResponse.json({ error: "GLB 파일은 50MB 이하여야 합니다" }, { status: 413 });
       }
       const extension = modelFile.name.toLowerCase().endsWith(".glb");
       if (!extension) {
-        return NextResponse.json({ error: "Upload a self-contained .glb file" }, { status: 400 });
+        return NextResponse.json({ error: "자체 포함된 .glb 파일을 올려주세요" }, { status: 400 });
       }
       const stored = await putObject(
         `maps/${Date.now()}-${randomUUID()}.glb`,
@@ -68,27 +68,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       modelUrl = stored.url;
     }
     if (!modelUrl) {
-      return NextResponse.json({ error: "Upload a GLB or provide a model URL" }, { status: 400 });
+      return NextResponse.json({ error: "GLB 파일을 올리거나 모델 URL을 입력하세요" }, { status: 400 });
     }
     if (remoteModelUrl && !/^https?:\/\//i.test(remoteModelUrl) && !remoteModelUrl.startsWith("/")) {
-      return NextResponse.json({ error: "Model URL must be an http(s) or app-relative URL" }, { status: 400 });
+      return NextResponse.json({ error: "모델 URL은 http(s) 또는 앱 내부 경로여야 합니다" }, { status: 400 });
     }
 
     const map = createMap({
       name,
-      blurb: blurb || "Custom test environment",
+      blurb: blurb || "사용자 제작 환경",
       points,
       gateWidth: Math.min(20, Math.max(2, numberField(form, "gateWidth", 5))),
-      defaultLaps: Math.min(20, Math.max(1, Math.round(numberField(form, "laps", 3)))),
+      defaultLaps: Math.min(2, Math.max(1, Math.round(numberField(form, "laps", 1)))),
       modelScale: Math.min(100, Math.max(0.01, numberField(form, "modelScale", 1))),
-      groundColor: String(form.get("groundColor") ?? "#263238"),
-      accent: String(form.get("accent") ?? "#22d3ee"),
-      skyColor: String(form.get("skyColor") ?? "#8ecae6"),
+      groundColor: String(form.get("groundColor") ?? "#8a6a45"),
+      accent: String(form.get("accent") ?? "#e0a84e"),
+      skyColor: String(form.get("skyColor") ?? "#e8c88f"),
       modelUrl,
     });
     return NextResponse.json({ map }, { status: 201 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not create map";
+    const message = error instanceof Error ? error.message : "맵을 만들지 못했습니다";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

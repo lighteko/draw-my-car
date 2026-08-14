@@ -4,7 +4,8 @@ import path from "node:path";
 import {
   createTrackDefinition,
   makeCheckpointGeometry,
-  type AuthoredCheckpoint,
+  makeSpawnPoints,
+  type AuthoredPose,
   type TrackDef,
   type Vec3,
 } from "@/lib/tracks";
@@ -34,7 +35,12 @@ export interface NewMap {
 function loadMaps(): TrackDef[] {
   if (!existsSync(MAPS_PATH)) return [];
   const parsed = JSON.parse(readFileSync(MAPS_PATH, "utf8")) as unknown;
-  return Array.isArray(parsed) ? (parsed as TrackDef[]) : [];
+  if (!Array.isArray(parsed)) return [];
+  // Maps saved before the shared start still carry a staggered grid; keep only the first
+  // slot so every racer lines up on the same spot. Rewritten on the next save.
+  return (parsed as TrackDef[]).map((map) =>
+    map.spawns?.length > 1 ? { ...map, spawns: map.spawns.slice(0, 1) } : map,
+  );
 }
 
 function persistMaps(maps: TrackDef[]): void {
@@ -76,26 +82,49 @@ export function createMap(input: NewMap): TrackDef {
 }
 
 /**
- * Patch the admin-tunable settings on a map: vehicle tuning, scene graphics, and/or the
- * authored checkpoint loop (`points`, which rebuilds the gates + spawn grid).
+ * Patch the admin-tunable settings on a map: vehicle tuning, scene graphics, the authored
+ * checkpoint loop (which rebuilds the gates), and/or the authored start pose (which rebuilds
+ * the grid). `spawn: null` clears the authored start, dropping the grid back to the loop.
+ *
+ * The two geometry fields are independent: saving checkpoints keeps an authored grid, and
+ * saving a start pose keeps the existing gates.
  */
 export function updateMapSettings(
   id: string,
   patch: {
     tuning?: Partial<VehicleTuning>;
     graphics?: Partial<GraphicsSettings>;
-    checkpoints?: AuthoredCheckpoint[];
+    checkpoints?: AuthoredPose[];
+    spawn?: AuthoredPose | null;
   },
 ): TrackDef | undefined {
   const maps = loadMaps();
   const index = maps.findIndex((map) => map.id === id);
   if (index === -1) return undefined;
   const current = maps[index];
-  const geometry = patch.checkpoints ? makeCheckpointGeometry(patch.checkpoints) : null;
+
+  const spawnOrigin = patch.spawn !== undefined ? patch.spawn : current.spawnOrigin ?? null;
+  let geometry: { gates: TrackDef["gates"]; spawns: TrackDef["spawns"] } | null = null;
+  if (patch.checkpoints) {
+    geometry = makeCheckpointGeometry(patch.checkpoints, spawnOrigin);
+  } else if (patch.spawn !== undefined) {
+    // Start pose only — keep the gates and rebuild just the grid, re-deriving it from the
+    // existing loop when the authored start was cleared.
+    geometry = {
+      gates: current.gates,
+      spawns: spawnOrigin
+        ? makeSpawnPoints(spawnOrigin)
+        : makeCheckpointGeometry(
+            current.gates.map((gate) => ({ position: gate.position, rotationY: gate.rotationY })),
+          ).spawns,
+    };
+  }
+
   maps[index] = {
     ...current,
     ...(patch.tuning ? { tuning: patch.tuning } : {}),
     ...(patch.graphics ? { graphics: patch.graphics } : {}),
+    ...(patch.spawn !== undefined ? { spawnOrigin } : {}),
     ...(geometry ? { gates: geometry.gates, spawns: geometry.spawns } : {}),
   };
   persistMaps(maps);

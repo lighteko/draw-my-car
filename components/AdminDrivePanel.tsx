@@ -18,18 +18,18 @@ interface Setting {
 const SETTINGS: Setting[] = [
   {
     key: "carMass",
-    label: "Car mass",
+    label: "차량 무게",
     min: 300,
     max: 1500,
     step: 25,
     format: (value) => `${Math.round(value)} kg`,
   },
-  { key: "engineForce", label: "Engine", min: 1000, max: 14000, step: 100 },
-  { key: "reverseForce", label: "Reverse", min: 500, max: 7000, step: 100 },
-  { key: "brakeForce", label: "Brakes", min: 16, max: 192, step: 4 },
+  { key: "engineForce", label: "엔진 출력", min: 1000, max: 14000, step: 100 },
+  { key: "reverseForce", label: "후진 출력", min: 500, max: 7000, step: 100 },
+  { key: "brakeForce", label: "브레이크", min: 16, max: 192, step: 4 },
   {
     key: "topSpeed",
-    label: "Top speed",
+    label: "최고 속도",
     min: 10,
     max: 60,
     step: 1,
@@ -37,7 +37,7 @@ const SETTINGS: Setting[] = [
   },
   {
     key: "maxSteer",
-    label: "Steering (slow)",
+    label: "조향 (저속)",
     min: 0.2,
     max: 0.8,
     step: 0.01,
@@ -45,15 +45,15 @@ const SETTINGS: Setting[] = [
   },
   {
     key: "highSpeedSteer",
-    label: "Steering (fast)",
+    label: "조향 (고속)",
     min: 0.05,
     max: 0.5,
     step: 0.01,
     format: (value) => `${Math.round((value * 180) / Math.PI)}°`,
   },
-  { key: "frictionSlip", label: "Forward grip", min: 1, max: 14, step: 0.25 },
-  { key: "sideFriction", label: "Side grip", min: 0.5, max: 3, step: 0.05 },
-  { key: "handbrakeSideFriction", label: "Drift grip", min: 0.1, max: 2, step: 0.05 },
+  { key: "frictionSlip", label: "전방 접지력", min: 1, max: 14, step: 0.25 },
+  { key: "sideFriction", label: "측면 접지력", min: 0.5, max: 3, step: 0.05 },
+  { key: "handbrakeSideFriction", label: "드리프트 접지력", min: 0.1, max: 2, step: 0.05 },
 ];
 
 export function AdminDrivePanel({
@@ -91,11 +91,11 @@ export function AdminDrivePanel({
           className="flex w-full items-center justify-between px-4 py-3 text-left"
         >
           <span>
-            <span className="block font-mono text-[9px] uppercase tracking-[0.25em] text-cyan-300/65">
-              Admin run
+            <span className="block font-mono text-[9px] uppercase tracking-[0.25em] text-amber-300/65">
+              관리자 주행
             </span>
             <span className="font-heading text-sm font-bold uppercase tracking-wide">
-              Vehicle tuning
+              차량 세팅
             </span>
           </span>
           <span className="text-sm text-white/45" aria-hidden>{open ? "−" : "+"}</span>
@@ -110,7 +110,7 @@ export function AdminDrivePanel({
                   <label key={setting.key} className="block">
                     <span className="mb-1 flex items-center justify-between text-[11px]">
                       <span className="text-white/55">{setting.label}</span>
-                      <span className="font-mono text-cyan-200">
+                      <span className="font-mono text-amber-200">
                         {setting.format?.(value) ?? Number(value.toFixed(2))}
                       </span>
                     </span>
@@ -123,7 +123,7 @@ export function AdminDrivePanel({
                       onChange={(event) =>
                         onChange({ ...tuning, [setting.key]: Number(event.target.value) })
                       }
-                      className="h-1.5 w-full cursor-pointer accent-cyan-400"
+                      className="h-1.5 w-full cursor-pointer accent-amber-400"
                     />
                   </label>
                 );
@@ -133,24 +133,24 @@ export function AdminDrivePanel({
               <button
                 type="button"
                 onClick={() => onChange({ ...DEFAULT_VEHICLE_TUNING })}
-                className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-heading text-[10px] font-semibold uppercase tracking-wider text-white/65 transition hover:border-cyan-400/40 hover:text-white"
+                className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-heading text-[10px] font-medium uppercase tracking-wider text-white/65 transition hover:border-amber-400/40 hover:text-white"
               >
-                Reset defaults
+                기본값으로
               </button>
               {onSave && (
                 <button
                   type="button"
                   onClick={handleSave}
                   disabled={saveState === "saving"}
-                  className="flex-1 rounded-lg border border-cyan-400/30 bg-cyan-500/15 px-3 py-2 font-heading text-[10px] font-semibold uppercase tracking-wider text-cyan-200 transition hover:border-cyan-400/60 hover:text-white disabled:opacity-60"
+                  className="flex-1 rounded-lg border border-amber-400/30 bg-amber-500/15 px-3 py-2 font-heading text-[10px] font-medium uppercase tracking-wider text-amber-200 transition hover:border-amber-400/60 hover:text-white disabled:opacity-60"
                 >
                   {saveState === "saving"
-                    ? "Saving…"
+                    ? "저장 중…"
                     : saveState === "saved"
-                      ? "Saved ✓"
+                      ? "저장됨 ✓"
                       : saveState === "error"
-                        ? "Save failed"
-                        : "Save to map"}
+                        ? "저장 실패"
+                        : "맵에 저장"}
                 </button>
               )}
             </div>

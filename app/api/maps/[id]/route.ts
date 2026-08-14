@@ -3,7 +3,7 @@ import { isAdminAuthorized } from "@/lib/adminAuth";
 import { deleteMap, getMap, updateMapSettings } from "@/lib/maps";
 import { DEFAULT_VEHICLE_TUNING, type VehicleTuning } from "@/lib/vehicleTuning";
 import { DEFAULT_GRAPHICS_SETTINGS, type GraphicsSettings } from "@/lib/graphicsSettings";
-import type { AuthoredCheckpoint, Vec3 } from "@/lib/tracks";
+import type { AuthoredPose, Vec3 } from "@/lib/tracks";
 
 /** Guard rails for authored checkpoints. */
 const MAX_CHECKPOINTS = 256;
@@ -68,23 +68,35 @@ function sanitizeGraphics(input: unknown): Partial<GraphicsSettings> | null {
   return Object.keys(graphics).length > 0 ? (graphics as Partial<GraphicsSettings>) : null;
 }
 
-/** Validate authored checkpoints (pose = position + heading). Returns null when the field is
- *  absent/malformed; an empty array is valid and clears the loop back to free drive. */
-function sanitizeCheckpoints(input: unknown): AuthoredCheckpoint[] | null {
+const clampCoord = (n: number) => Math.min(COORD_LIMIT, Math.max(-COORD_LIMIT, n));
+
+/** Validate one authored pose (position + heading). Returns null when it is malformed. */
+function sanitizePose(input: unknown): AuthoredPose | null {
+  if (typeof input !== "object" || input === null) return null;
+  const { position, rotationY } = input as { position?: unknown; rotationY?: unknown };
+  if (!Array.isArray(position) || position.length !== 3) return null;
+  const [x, y, z] = position as unknown[];
+  if (![x, y, z].every((n) => typeof n === "number" && Number.isFinite(n))) return null;
+  if (typeof rotationY !== "number" || !Number.isFinite(rotationY)) return null;
+  return {
+    position: [
+      clampCoord(x as number),
+      clampCoord(y as number),
+      clampCoord(z as number),
+    ] as Vec3,
+    rotationY,
+  };
+}
+
+/** Validate authored checkpoints. Returns null when the field is absent/malformed; an empty
+ *  array is valid and clears the loop back to free drive. */
+function sanitizeCheckpoints(input: unknown): AuthoredPose[] | null {
   if (!Array.isArray(input)) return null;
-  const clamp = (n: number) => Math.min(COORD_LIMIT, Math.max(-COORD_LIMIT, n));
-  const checkpoints: AuthoredCheckpoint[] = [];
+  const checkpoints: AuthoredPose[] = [];
   for (const entry of input.slice(0, MAX_CHECKPOINTS)) {
-    if (typeof entry !== "object" || entry === null) return null;
-    const { position, rotationY } = entry as { position?: unknown; rotationY?: unknown };
-    if (!Array.isArray(position) || position.length !== 3) return null;
-    const [x, y, z] = position as unknown[];
-    if (![x, y, z].every((n) => typeof n === "number" && Number.isFinite(n))) return null;
-    if (typeof rotationY !== "number" || !Number.isFinite(rotationY)) return null;
-    checkpoints.push({
-      position: [clamp(x as number), clamp(y as number), clamp(z as number)] as Vec3,
-      rotationY,
-    });
+    const pose = sanitizePose(entry);
+    if (!pose) return null;
+    checkpoints.push(pose);
   }
   return checkpoints;
 }
@@ -95,7 +107,7 @@ export async function GET(
 ): Promise<NextResponse> {
   const { id } = await ctx.params;
   const map = getMap(id);
-  if (!map) return NextResponse.json({ error: "map not found" }, { status: 404 });
+  if (!map) return NextResponse.json({ error: "맵을 찾을 수 없습니다" }, { status: 404 });
   return NextResponse.json({ map });
 }
 
@@ -104,26 +116,37 @@ export async function PATCH(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   if (!(await isAdminAuthorized())) {
-    return NextResponse.json({ error: "admin sign-in required" }, { status: 401 });
+    return NextResponse.json({ error: "관리자 로그인이 필요합니다" }, { status: 401 });
   }
   const { id } = await ctx.params;
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+    return NextResponse.json({ error: "잘못된 요청 형식입니다" }, { status: 400 });
   }
-  const source = body as { tuning?: unknown; graphics?: unknown; checkpoints?: unknown };
+  const source = body as {
+    tuning?: unknown;
+    graphics?: unknown;
+    checkpoints?: unknown;
+    spawn?: unknown;
+  };
   const tuning = sanitizeTuning(source?.tuning);
   const graphics = sanitizeGraphics(source?.graphics);
   const checkpoints =
     source?.checkpoints !== undefined ? sanitizeCheckpoints(source?.checkpoints) : null;
   if (source?.checkpoints !== undefined && checkpoints === null) {
-    return NextResponse.json({ error: "invalid checkpoints" }, { status: 400 });
+    return NextResponse.json({ error: "체크포인트 값이 올바르지 않습니다" }, { status: 400 });
   }
-  if (!tuning && !graphics && checkpoints === null) {
+  // `spawn: null` is meaningful — it clears the authored start pose.
+  const hasSpawn = source?.spawn !== undefined;
+  const spawn = hasSpawn && source.spawn !== null ? sanitizePose(source.spawn) : null;
+  if (hasSpawn && source.spawn !== null && !spawn) {
+    return NextResponse.json({ error: "출발 지점 값이 올바르지 않습니다" }, { status: 400 });
+  }
+  if (!tuning && !graphics && checkpoints === null && !hasSpawn) {
     return NextResponse.json(
-      { error: "no valid tuning, graphics, or checkpoint fields" },
+      { error: "저장할 세팅·그래픽·체크포인트·출발점 값이 없습니다" },
       { status: 400 },
     );
   }
@@ -131,8 +154,9 @@ export async function PATCH(
     ...(tuning ? { tuning } : {}),
     ...(graphics ? { graphics } : {}),
     ...(checkpoints !== null ? { checkpoints } : {}),
+    ...(hasSpawn ? { spawn } : {}),
   });
-  if (!map) return NextResponse.json({ error: "map not found" }, { status: 404 });
+  if (!map) return NextResponse.json({ error: "맵을 찾을 수 없습니다" }, { status: 404 });
   return NextResponse.json({ map });
 }
 
@@ -141,9 +165,9 @@ export async function DELETE(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   if (!(await isAdminAuthorized())) {
-    return NextResponse.json({ error: "admin sign-in required" }, { status: 401 });
+    return NextResponse.json({ error: "관리자 로그인이 필요합니다" }, { status: 401 });
   }
   const { id } = await ctx.params;
-  if (!deleteMap(id)) return NextResponse.json({ error: "map not found" }, { status: 404 });
+  if (!deleteMap(id)) return NextResponse.json({ error: "맵을 찾을 수 없습니다" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

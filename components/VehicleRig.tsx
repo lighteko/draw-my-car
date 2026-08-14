@@ -212,7 +212,7 @@ export function VehicleRig({
         ray,
         SNAP_CAST_HEIGHT * 3,
         true,
-        undefined,
+        rapier.QueryFilterFlags.EXCLUDE_SENSORS, // never seat the car on another player
         undefined,
         undefined,
         chassis,
@@ -315,7 +315,10 @@ export function VehicleRig({
       if (w.isSteering) controller.setWheelSteering(i, steerRef.current);
     });
 
-    controller.updateVehicle(dt);
+    // EXCLUDE_SENSORS keeps the suspension rays off other players' cars. Remote cars are
+    // sensor colliders so they never push you, but a wheel ray would still find one and the
+    // car would climb a ghost that isn't really there.
+    controller.updateVehicle(dt, rapier.QueryFilterFlags.EXCLUDE_SENSORS);
   });
 
   useFrame(() => {

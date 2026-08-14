@@ -2,7 +2,8 @@
 
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { getTrack, resolveTrackId } from "@/lib/tracks";
+import type { TrackDef } from "@/lib/tracks";
+import { resolveSharedTrack } from "@/lib/mapCatalog";
 import { apiGet } from "@/lib/api";
 import { usePlayer } from "@/lib/identity";
 import { joinRoom, type RoomHandle } from "@/lib/realtime";
@@ -31,7 +32,8 @@ const GRID_WAIT_MS = 8000;
 const NO_GO_FALLBACK_MS = 12000;
 
 interface RaceConfig {
-  trackId: string;
+  /** null when the room's map is gone and the library has nothing to fall back to. */
+  track: TrackDef | null;
   laps: number;
   glb: string | null;
   ownerDeviceId: string;
@@ -85,8 +87,8 @@ export default function RoomRacePage() {
   return (
     <Suspense
       fallback={
-        <div className="flex h-dvh w-full items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
-          Lining up on the grid…
+        <div className="flex h-dvh w-full items-center justify-center bg-[#17110b] font-mono text-sm text-[#d9c193]/70">
+          출발선에 정렬하는 중…
         </div>
       }
     >
@@ -137,13 +139,15 @@ function RoomRace() {
             room: { settings: RaceSettings; ownerDeviceId: string };
           }>(`/api/rooms/${params.code}`);
           if (!ownerDeviceId) ownerDeviceId = room.ownerDeviceId;
-          if (!trackId) trackId = resolveTrackId(room.settings.trackId);
+          if (!trackId) trackId = room.settings.trackId;
           if (!laps) laps = room.settings.laps;
         } catch {
-          if (!trackId) trackId = resolveTrackId("random");
-          if (!laps) laps = 3;
+          if (!laps) laps = 1;
         }
       }
+      // Everyone resolves the same way: the id the owner broadcast, or — if that map is
+      // gone — the newest map, so a fallback still lands the whole room on one track.
+      const track = await resolveSharedTrack(trackId ?? "");
 
       const carId = window.localStorage.getItem(ACTIVE_CAR_KEY);
       let glb: string | null = null;
@@ -166,11 +170,11 @@ function RoomRace() {
         goStartAtRef.current = handoff.startAt;
         setStartAt(handoff.startAt);
       }
-      const gateCount = getTrack(trackId!).gates.length;
+      const gateCount = track?.gates.length ?? 0;
       const spectator = window.localStorage.getItem("dmc_role") === "spectator";
       ownerRef.current = ownerDeviceId;
       gateCountRef.current = gateCount;
-      setConfig({ trackId: trackId!, laps, glb, ownerDeviceId, gateCount, spectator });
+      setConfig({ track, laps, glb, ownerDeviceId, gateCount, spectator });
     })();
     return () => {
       cancelled = true;
@@ -186,7 +190,7 @@ function RoomRace() {
 
     const persistHandoff = (at: number) => {
       saveRaceHandoff(params.code, {
-        trackId: config.trackId,
+        trackId: config.track?.id ?? "",
         laps: config.laps,
         grid: gridRef.current ?? [],
         ownerDeviceId: config.ownerDeviceId,
@@ -398,15 +402,30 @@ function RoomRace() {
 
   if (!config || (!config.spectator && spawnIndex == null)) {
     return (
-      <div className="flex h-dvh w-full items-center justify-center bg-neutral-900 font-mono text-sm text-neutral-400">
-        Lining up on the grid…
+      <div className="flex h-dvh w-full items-center justify-center bg-[#17110b] font-mono text-sm text-[#d9c193]/70">
+        출발선에 정렬하는 중…
+      </div>
+    );
+  }
+
+  if (!config.track) {
+    return (
+      <div className="flex h-dvh w-full flex-col items-center justify-center gap-4 bg-[#17110b] text-center font-mono text-sm text-[#d9c193]/70">
+        <p>이 방의 맵을 더 이상 사용할 수 없습니다.</p>
+        <button
+          type="button"
+          onClick={() => router.push(`/r/${params.code}`)}
+          className="text-amber-400 underline"
+        >
+          대기실로
+        </button>
       </div>
     );
   }
 
   return (
     <RaceSceneClient
-      trackId={config.trackId}
+      track={config.track}
       carGlbUrl={config.glb}
       laps={config.laps}
       spawnIndex={spawnIndex ?? 0}
@@ -420,7 +439,7 @@ function RoomRace() {
       onProgress={reportProgress}
       onFinished={reportFinished}
       onExit={() => router.push(`/r/${params.code}`)}
-      exitLabel="Back to lobby"
+      exitLabel="대기실로"
     />
   );
 }

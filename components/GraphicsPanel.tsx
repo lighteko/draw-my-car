@@ -27,14 +27,14 @@ interface Slider {
 }
 
 const SLIDERS: Slider[] = [
-  { key: "sunIntensity", label: "Sun intensity", min: 0, max: 5, step: 0.05 },
-  { key: "ambient", label: "Ambient", min: 0, max: 2, step: 0.05 },
-  { key: "fill", label: "Sky fill", min: 0, max: 1.5, step: 0.05 },
+  { key: "sunIntensity", label: "햇빛 세기", min: 0, max: 5, step: 0.05 },
+  { key: "ambient", label: "환경광", min: 0, max: 2, step: 0.05 },
+  { key: "fill", label: "하늘 반사광", min: 0, max: 1.5, step: 0.05 },
 ];
 
 const FOG_SLIDERS: Slider[] = [
-  { key: "fogNear", label: "Fog start", min: 20, max: 400, step: 5, format: (v) => `${Math.round(v)} m` },
-  { key: "fogFar", label: "Fog end", min: 100, max: 900, step: 10, format: (v) => `${Math.round(v)} m` },
+  { key: "fogNear", label: "안개 시작", min: 20, max: 400, step: 5, format: (v) => `${Math.round(v)} m` },
+  { key: "fogFar", label: "안개 끝", min: 100, max: 900, step: 10, format: (v) => `${Math.round(v)} m` },
 ];
 
 // Shadow quality: raising the resolution and dialing in the bias removes the "digital"
@@ -42,7 +42,7 @@ const FOG_SLIDERS: Slider[] = [
 const SHADOW_SLIDERS: Slider[] = [
   {
     key: "shadowMapSize",
-    label: "Resolution",
+    label: "그림자 해상도",
     min: 512,
     max: 4096,
     step: 512,
@@ -50,7 +50,7 @@ const SHADOW_SLIDERS: Slider[] = [
   },
   {
     key: "shadowBias",
-    label: "Depth bias",
+    label: "깊이 보정",
     min: -0.001,
     max: 0.001,
     step: 0.00005,
@@ -58,7 +58,7 @@ const SHADOW_SLIDERS: Slider[] = [
   },
   {
     key: "shadowNormalBias",
-    label: "Normal bias",
+    label: "노멀 보정",
     min: 0,
     max: 0.1,
     step: 0.005,
@@ -101,10 +101,10 @@ export function GraphicsPanel({
           className="flex w-full items-center justify-between px-4 py-3 text-left"
         >
           <span>
-            <span className="block font-mono text-[9px] uppercase tracking-[0.25em] text-cyan-300/65">
-              Admin
+            <span className="block font-mono text-[9px] uppercase tracking-[0.25em] text-amber-300/65">
+              관리자
             </span>
-            <span className="font-heading text-sm font-bold uppercase tracking-wide">Graphics</span>
+            <span className="font-heading text-sm font-bold">그래픽</span>
           </span>
           <span className="text-sm text-white/45" aria-hidden>
             {open ? "−" : "+"}
@@ -117,15 +117,15 @@ export function GraphicsPanel({
               <SunPad settings={settings} onChange={onChange} />
               <div className="flex-1 space-y-1 self-center font-mono text-[10px] text-white/55">
                 <div className="flex justify-between">
-                  <span>Azimuth</span>
-                  <span className="text-cyan-200">{Math.round(settings.sunAzimuth)}°</span>
+                  <span>방위각</span>
+                  <span className="text-amber-200">{Math.round(settings.sunAzimuth)}°</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Elevation</span>
-                  <span className="text-cyan-200">{Math.round(settings.sunElevation)}°</span>
+                  <span>고도</span>
+                  <span className="text-amber-200">{Math.round(settings.sunElevation)}°</span>
                 </div>
                 <p className="pt-1 text-[9px] leading-tight text-white/35">
-                  Drag the sun. Centre is overhead, edge is low.
+                  해를 끌어 보세요. 가운데가 정오, 가장자리가 일몰입니다.
                 </p>
               </div>
             </div>
@@ -143,12 +143,12 @@ export function GraphicsPanel({
 
             <div className="mt-3 flex gap-2">
               <ToggleRow
-                label="Shadows"
+                label="그림자"
                 on={settings.shadows}
                 onToggle={() => onChange({ ...settings, shadows: !settings.shadows })}
               />
               <ToggleRow
-                label="Fog"
+                label="안개"
                 on={settings.fog}
                 onToggle={() => onChange({ ...settings, fog: !settings.fog })}
               />
@@ -170,7 +170,7 @@ export function GraphicsPanel({
             {settings.shadows && (
               <div className="mt-4 border-t border-white/10 pt-3">
                 <div className="mb-2 font-mono text-[9px] uppercase tracking-[0.2em] text-white/35">
-                  Shadow quality
+                  그림자 품질
                 </div>
                 <div className="space-y-3">
                   {SHADOW_SLIDERS.map((slider) => (
@@ -189,24 +189,24 @@ export function GraphicsPanel({
               <button
                 type="button"
                 onClick={() => onChange({ ...DEFAULT_GRAPHICS_SETTINGS })}
-                className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-heading text-[10px] font-semibold uppercase tracking-wider text-white/65 transition hover:border-cyan-400/40 hover:text-white"
+                className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-heading text-[10px] font-medium uppercase tracking-wider text-white/65 transition hover:border-amber-400/40 hover:text-white"
               >
-                Reset defaults
+                기본값으로
               </button>
               {onSave && (
                 <button
                   type="button"
                   onClick={handleSave}
                   disabled={saveState === "saving"}
-                  className="flex-1 rounded-lg border border-cyan-400/30 bg-cyan-500/15 px-3 py-2 font-heading text-[10px] font-semibold uppercase tracking-wider text-cyan-200 transition hover:border-cyan-400/60 hover:text-white disabled:opacity-60"
+                  className="flex-1 rounded-lg border border-amber-400/30 bg-amber-500/15 px-3 py-2 font-heading text-[10px] font-medium uppercase tracking-wider text-amber-200 transition hover:border-amber-400/60 hover:text-white disabled:opacity-60"
                 >
                   {saveState === "saving"
-                    ? "Saving…"
+                    ? "저장 중…"
                     : saveState === "saved"
-                      ? "Saved ✓"
+                      ? "저장됨 ✓"
                       : saveState === "error"
-                        ? "Save failed"
-                        : "Save to map"}
+                        ? "저장 실패"
+                        : "맵에 저장"}
                 </button>
               )}
             </div>
@@ -230,7 +230,7 @@ function SliderRow({
     <label className="block">
       <span className="mb-1 flex items-center justify-between text-[11px]">
         <span className="text-white/55">{slider.label}</span>
-        <span className="font-mono text-cyan-200">
+        <span className="font-mono text-amber-200">
           {slider.format?.(value) ?? Number(value.toFixed(2))}
         </span>
       </span>
@@ -241,7 +241,7 @@ function SliderRow({
         step={slider.step}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="h-1.5 w-full cursor-pointer accent-cyan-400"
+        className="h-1.5 w-full cursor-pointer accent-amber-400"
       />
     </label>
   );
@@ -263,12 +263,12 @@ function ToggleRow({
       aria-pressed={on}
       className={`flex flex-1 items-center justify-between rounded-lg border px-3 py-2 text-[11px] transition ${
         on
-          ? "border-cyan-400/40 bg-cyan-500/15 text-cyan-100"
+          ? "border-amber-400/40 bg-amber-500/15 text-amber-100"
           : "border-white/10 bg-white/5 text-white/50 hover:text-white"
       }`}
     >
       <span>{label}</span>
-      <span className="font-mono text-[10px]">{on ? "ON" : "OFF"}</span>
+      <span className="font-mono text-[10px]">{on ? "켜짐" : "꺼짐"}</span>
     </button>
   );
 }

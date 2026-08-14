@@ -1,6 +1,7 @@
 /**
- * tracks.ts — race track catalogue.
+ * tracks.ts — track geometry, shared by the server-side map store and the scene.
  *
+ * Every track is an admin-uploaded map (see lib/maps.ts); there is no built-in catalogue.
  * Tracks use a "gate racing" model: an ordered loop of gates on open ground that players
  * drive through in sequence, N laps. No walled circuit needed — this keeps geometry cheap
  * and lap detection robust (planar proximity to the next expected gate). Gate rotations and
@@ -37,6 +38,12 @@ export interface TrackMeta {
   blurb: string;
 }
 
+/** A pose exactly as the admin authored it: the car's position and heading when captured. */
+export interface AuthoredPose {
+  position: Vec3;
+  rotationY: number;
+}
+
 export interface TrackDef extends TrackMeta {
   groundColor: string;
   /** Gate + accent color. */
@@ -45,6 +52,11 @@ export interface TrackDef extends TrackMeta {
   /** Ordered loop; index 0 is the start/finish gate. */
   gates: Gate[];
   spawns: SpawnPoint[];
+  /**
+   * The admin-authored start pose the grid is built around. Absent means the grid is
+   * derived from the gate loop instead (and free-drive maps start at the world origin).
+   */
+  spawnOrigin?: AuthoredPose | null;
   decorations: Decoration[];
   defaultLaps: number;
   /** Optional uploaded GLB environment rendered with fixed mesh collision. */
@@ -58,7 +70,7 @@ export interface TrackDef extends TrackMeta {
 }
 
 const GATE_WIDTH = 5;
-const GRID_BACK = 7; // how far behind gate 0 the front row spawns
+const GRID_BACK = 7; // how far behind gate 0 the derived start sits
 
 function sub(a: Vec3, b: Vec3): Vec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -83,27 +95,25 @@ function makeGates(points: Vec3[]): Gate[] {
   });
 }
 
-/** A staggered grid of up to `count` spawns behind gate 0, facing gate 1. */
-function makeSpawns(points: Vec3[], count = 8): SpawnPoint[] {
+/**
+ * The single start pose behind gate 0, facing gate 1.
+ *
+ * Everyone starts on the same spot — no staggered grid. Cars pass through each other
+ * (remote vehicles are sensor colliders), so overlapping at the line is harmless, and one
+ * shared start keeps every racer's distance to the first gate identical.
+ */
+function makeSpawns(points: Vec3[]): SpawnPoint[] {
   const into = norm(sub(points[1] ?? points[0], points[0])); // travel direction at start
-  const yaw = yawFromDir(into);
-  const lateral: Vec3 = [into[2], 0, -into[0]]; // perpendicular on the ground
-  const spawns: SpawnPoint[] = [];
-  for (let i = 0; i < count; i++) {
-    const row = Math.floor(i / 2);
-    const side = i % 2 === 0 ? -1 : 1;
-    const lane = side * (3 + (i % 2 === 0 ? 0 : 0)); // ±3m lanes
-    const back = GRID_BACK + row * 4;
-    spawns.push({
+  return [
+    {
       position: [
-        points[0][0] - into[0] * back + lateral[0] * lane,
+        points[0][0] - into[0] * GRID_BACK,
         points[0][1],
-        points[0][2] - into[2] * back + lateral[2] * lane,
+        points[0][2] - into[2] * GRID_BACK,
       ],
-      rotationY: yaw,
-    });
-  }
-  return spawns;
+      rotationY: yawFromDir(into),
+    },
+  ];
 }
 
 function buildTrack(
@@ -125,10 +135,12 @@ function buildTrack(
   };
 }
 
-/** A checkpoint exactly as the admin authored it: the car's pose when it was dropped. */
-export interface AuthoredCheckpoint {
-  position: Vec3;
-  rotationY: number;
+/**
+ * The start for an admin-authored pose: exactly where the admin parked, for everyone.
+ * Returned as a list because that is the shape a track carries, but it is always one entry.
+ */
+export function makeSpawnPoints(origin: AuthoredPose): SpawnPoint[] {
+  return [{ position: origin.position, rotationY: origin.rotationY }];
 }
 
 /**
@@ -136,22 +148,49 @@ export interface AuthoredCheckpoint {
  *
  * Gate positions AND headings are taken verbatim from what was authored — the heading is NOT
  * re-derived from the loop tangent (which mangles it when the driven path isn't a clean closed
- * loop). Only the spawn grid is derived, from the checkpoint positions. Empty input collapses
- * the map back to free drive with a single origin spawn.
+ * loop). The grid comes from `spawnOrigin` when the admin authored one; otherwise it is derived
+ * from the checkpoint positions, and an empty loop with no authored start collapses the map
+ * back to free drive from the world origin.
  */
-export function makeCheckpointGeometry(checkpoints: AuthoredCheckpoint[]): {
+export function makeCheckpointGeometry(
+  checkpoints: AuthoredPose[],
+  spawnOrigin?: AuthoredPose | null,
+): {
   gates: Gate[];
   spawns: SpawnPoint[];
 } {
-  if (checkpoints.length === 0) {
-    return { gates: [], spawns: [{ position: [0, 0, 0], rotationY: 0 }] };
-  }
   const gates: Gate[] = checkpoints.map((cp) => ({
     position: cp.position,
     rotationY: cp.rotationY,
     width: GATE_WIDTH,
   }));
+  if (spawnOrigin) return { gates, spawns: makeSpawnPoints(spawnOrigin) };
+  if (checkpoints.length === 0) {
+    return { gates: [], spawns: [{ position: [0, 0, 0], rotationY: 0 }] };
+  }
   return { gates, spawns: makeSpawns(checkpoints.map((cp) => cp.position)) };
+}
+
+/** Length of one lap in metres: the gate loop measured end to end, closing back to gate 0. */
+export function lapDistance(gates: Gate[]): number {
+  if (gates.length < 2) return 0;
+  let total = 0;
+  for (let i = 0; i < gates.length; i++) {
+    const a = gates[i].position;
+    const b = gates[(i + 1) % gates.length].position;
+    total += Math.hypot(b[0] - a[0], b[2] - a[2]);
+  }
+  return total;
+}
+
+/**
+ * Rough seconds a race will take, for the lobby. Deliberately pessimistic about pace: a lap
+ * average well below top speed accounts for corners, mistakes, and the standing start.
+ */
+export function estimateRaceSeconds(gates: Gate[], laps: number): number {
+  const metres = lapDistance(gates) * Math.max(1, laps);
+  const metresPerSecond = 13; // ~47 km/h average
+  return Math.round(metres / metresPerSecond);
 }
 
 /** Build a track from admin-authored checkpoint positions. */
@@ -184,104 +223,4 @@ export function createTrackDefinition(
     modelScale: meta.modelScale ?? 1,
     createdAt: meta.createdAt,
   };
-}
-
-// Wide, flowing oval-ish circuit.
-const SUNSET = buildTrack(
-  {
-    id: "sunset-circuit",
-    name: "Sunset Circuit",
-    blurb: "Flowing curves, gentle chicane",
-    groundColor: "#6b5a4a",
-    accent: "#f97316",
-    skyColor: "#fbbf24",
-  },
-  [
-    [0, 0, 40],
-    [26, 0, 30],
-    [34, 0, 6],
-    [22, 0, -18],
-    [0, 0, -30],
-    [-22, 0, -18],
-    [-34, 0, 6],
-    [-26, 0, 30],
-  ],
-);
-
-// Big, near-circular oval — room for drifting.
-const DUST = buildTrack(
-  {
-    id: "dust-bowl",
-    name: "Dust Bowl",
-    blurb: "Wide oval, big drifts",
-    groundColor: "#8a7a5c",
-    accent: "#eab308",
-    skyColor: "#fde68a",
-    defaultLaps: 3,
-  },
-  [
-    [0, 0, 44],
-    [30, 0, 34],
-    [42, 0, 0],
-    [30, 0, -34],
-    [0, 0, -44],
-    [-30, 0, -34],
-    [-42, 0, 0],
-    [-30, 0, 34],
-  ],
-  [
-    { position: [0, 0, 0], kind: "pillar" },
-    { position: [12, 0, 12], kind: "cone" },
-    { position: [-12, 0, -12], kind: "cone" },
-  ],
-);
-
-// Tight technical zig-zag loop.
-const HARBOR = buildTrack(
-  {
-    id: "harbor-loop",
-    name: "Harbor Loop",
-    blurb: "Tight technical dockside",
-    groundColor: "#4b5563",
-    accent: "#38bdf8",
-    skyColor: "#93c5fd",
-  },
-  [
-    [0, 0, 30],
-    [18, 0, 24],
-    [14, 0, 6],
-    [28, 0, -8],
-    [16, 0, -24],
-    [-6, 0, -20],
-    [-4, 0, -2],
-    [-20, 0, 10],
-    [-16, 0, 26],
-  ],
-  [
-    { position: [8, 0, 0], kind: "crate" },
-    { position: [-10, 0, 4], kind: "crate" },
-  ],
-);
-
-export const TRACKS: TrackDef[] = [SUNSET, DUST, HARBOR];
-
-export function getTrack(id: string): TrackDef {
-  return TRACKS.find((t) => t.id === id) ?? TRACKS[0];
-}
-
-export function findBuiltInTrack(id: string): TrackDef | undefined {
-  return TRACKS.find((track) => track.id === id);
-}
-
-export function trackName(id: string): string {
-  return TRACKS.find((t) => t.id === id)?.name ?? id;
-}
-
-export function randomTrackId(): string {
-  return TRACKS[Math.floor(Math.random() * TRACKS.length)].id;
-}
-
-/** Resolve a settings trackId ("random" or a specific id) to a concrete track id. */
-export function resolveTrackId(trackId: string): string {
-  return trackId === "random" ? randomTrackId() : trackId;
 }

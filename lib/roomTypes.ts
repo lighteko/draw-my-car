@@ -8,7 +8,7 @@
 export type RaceType = "circuit";
 
 export interface RaceSettings {
-  /** A TRACK id, or "random" (resolved at race start). */
+  /** An admin map id, or "random" (resolved by the host at race start). */
   trackId: string;
   raceType: RaceType;
   laps: number;
@@ -18,11 +18,13 @@ export interface RaceSettings {
 export const DEFAULT_SETTINGS: RaceSettings = {
   trackId: "random",
   raceType: "circuit",
-  laps: 3,
+  laps: 1,
   maxPlayers: 8,
 };
 
-export const LAP_OPTIONS = [1, 2, 3, 5] as const;
+// One lap by default, two at most: a lap of the Jericho map is ~2.2 km, which is already
+// close to three minutes of driving — more than that stops being a pick-up-and-play race.
+export const LAP_OPTIONS = [1, 2] as const;
 export const MAX_PLAYER_OPTIONS = [2, 4, 6, 8] as const;
 
 export type Role = "player" | "spectator";

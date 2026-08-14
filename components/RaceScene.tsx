@@ -19,8 +19,19 @@ import {
   normalizeOrientation,
 } from "@/lib/rig";
 import { applyDoodleStyle } from "@/lib/doodle";
-import { getTrack, type Gate, type TrackDef, type Vec3 } from "@/lib/tracks";
+import type { AuthoredPose, Gate, TrackDef, Vec3 } from "@/lib/tracks";
 import { useAutoFullscreen } from "@/lib/fullscreen";
+import {
+  isMuted,
+  playCountdownBeep,
+  playFinishFanfare,
+  playGoHorn,
+  playWrongWay,
+  setEngineSpeed,
+  setMuted,
+  stopEngine,
+  unlockAudio,
+} from "@/lib/audio";
 import type { Quat, Standing, Vec3n } from "@/lib/roomTypes";
 import { VehicleRig, type RespawnPoint } from "./VehicleRig";
 import { RaceHud, type RaceResult } from "./RaceHud";
@@ -30,7 +41,7 @@ import { Minimap } from "./Minimap";
 import { AdminMinimap } from "./AdminMinimap";
 import { AdminDrivePanel } from "./AdminDrivePanel";
 import { GraphicsPanel } from "./GraphicsPanel";
-import { CheckpointPanel } from "./CheckpointPanel";
+import { LayoutPanel } from "./LayoutPanel";
 import { resolveVehicleTuning, type VehicleTuning } from "@/lib/vehicleTuning";
 import {
   resolveGraphicsSettings,
@@ -64,16 +75,32 @@ const GROUND_HALF = 600;
 // surface is under the clicked point (uploaded GLB maps have no fixed ground plane).
 const TELEPORT_CAST_HEIGHT = 200;
 
+// Guidance arrow: how far above the car it floats, how many gates ahead it averages, and the
+// weight each of those gets. Aiming at just the next gate makes the arrow flick around as the
+// car passes it; blending the next three points it down the route instead — measured against
+// the 188-gate map, the worst single-frame swing drops from ~65° to ~27°, which the damping
+// below then spreads over several frames. A gate closer than ARROW_SKIP_RADIUS is dropped from
+// the blend — at that range its bearing is mostly noise.
+const ARROW_HEIGHT = 2.4;
+const ARROW_WEIGHTS = [1, 0.8, 0.5];
+const ARROW_SKIP_RADIUS = 3;
+
+// Start/finish archway: post height and thickness, the checkered banner across the top, its
+// rows of checks, and how far below the authored gate pose the road actually is (poses are
+// captured at chassis height).
+const POST_HEIGHT = 4.2;
+const POST_THICKNESS = 0.45;
+const BANNER_HEIGHT = 1.2;
+const CHECKER_ROWS = 2;
+const START_GATE_DROP = 1;
+
 // Authored checkpoint gate: half-width of the opening / crossing trigger, and the vertical
 // tolerance for a crossing (keeps overpasses honest).
 const CHECKPOINT_RADIUS = 6;
 const CHECKPOINT_MAX_HEIGHT_DIFF = 6;
 
 /** An admin-authored checkpoint: the car pose captured when it was dropped. */
-interface Checkpoint {
-  position: Vec3;
-  rotationY: number;
-}
+type Checkpoint = AuthoredPose;
 interface CheckpointProgress {
   nextIndex: number;
   lastPassed: number;
@@ -87,8 +114,7 @@ interface Progress {
 }
 
 export function RaceScene({
-  trackId,
-  track: customTrack,
+  track,
   carGlbUrl,
   laps,
   spawnIndex = 0,
@@ -105,9 +131,8 @@ export function RaceScene({
   exitLabel,
   adminMode = false,
 }: {
-  trackId: string;
-  /** Admin-authored track definition; otherwise resolved from the built-in catalogue. */
-  track?: TrackDef;
+  /** The admin-authored map to race on, resolved by the page from /api/maps. */
+  track: TrackDef;
   carGlbUrl: string | null;
   laps: number;
   spawnIndex?: number;
@@ -138,7 +163,6 @@ export function RaceScene({
   adminMode?: boolean;
 }) {
   useAutoFullscreen();
-  const track = useMemo(() => customTrack ?? getTrack(trackId), [customTrack, trackId]);
   const freeDrive = track.gates.length === 0;
   const spawn = track.spawns[spawnIndex % track.spawns.length];
   const chassisRef = useRef<RapierRigidBody>(null);
@@ -149,11 +173,19 @@ export function RaceScene({
   const adminRespawnRef = useRef<RespawnPoint | null>(null);
   // Admin checkpoint authoring: the ordered loop being dropped, whether order is enforced,
   // and the crossing progress the enforcer tracks (a ref so it lives inside the physics step).
-  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  // Seeded from the loop the map already has. Without this the panel would open empty on every
+  // visit and the next "save route" would replace the authored loop with whatever was dropped
+  // in this session — silently wiping the map's checkpoints.
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>(() =>
+    track.gates.map((gate) => ({ position: gate.position, rotationY: gate.rotationY })),
+  );
   const [enforceOrder, setEnforceOrder] = useState(false);
   const [cpNext, setCpNext] = useState(0);
   const cpProgress = useRef<CheckpointProgress>({ nextIndex: 0, lastPassed: -1 });
   const cpStartPose = useRef<Checkpoint | null>(null);
+  // Admin start-grid authoring: the pose slot 0 will sit on, seeded from what the map
+  // already has saved so the panel opens showing the current start.
+  const [spawnPose, setSpawnPose] = useState<AuthoredPose | null>(track.spawnOrigin ?? null);
 
   // Solo play (prop omitted): self-schedule a local start so practice keeps its 3-2-1.
   const [soloStartAt] = useState<number | null>(() =>
@@ -173,7 +205,56 @@ export function RaceScene({
     resolveGraphicsSettings(track.graphics),
   );
   const sunPos = useMemo(() => sunPosition(graphics), [graphics]);
+  // The gates the guidance arrow blends: the next one and the couple after it, wrapping the loop.
+  const arrowTargets = useMemo(() => {
+    const total = track.gates.length;
+    if (total === 0) return [];
+    return ARROW_WEIGHTS.slice(0, total).map(
+      (_, i) => track.gates[(nextGate + i) % total].position,
+    );
+  }, [track.gates, nextGate]);
   const [wrongWay, setWrongWay] = useState(false);
+  // Lazy init rather than a setState in the effect below: the scene is client-only, so the
+  // stored preference is readable on the first render.
+  const [muted, setMutedState] = useState(() => isMuted());
+
+  // Browsers only allow audio after a gesture, and a race can start from a keypress as
+  // easily as a tap — so unlock on whichever comes first, once.
+  useEffect(() => {
+    const unlock = () => void unlockAudio();
+    const options = { once: true } as const;
+    window.addEventListener("pointerdown", unlock, options);
+    window.addEventListener("keydown", unlock, options);
+    void unlockAudio(); // already-unlocked contexts (a same-tab replay) need no gesture
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
+
+  // The warning tone rides the same state the HUD banner does, so it fires once per episode.
+  useEffect(() => {
+    if (wrongWay) playWrongWay();
+  }, [wrongWay]);
+
+  const toggleMuted = useCallback(() => {
+    setMutedState((current) => {
+      const next = !current;
+      setMuted(next);
+      return next;
+    });
+    void unlockAudio();
+  }, []);
+
+  // Shown briefly after a wrong-way reset so the teleport is explained, not just felt.
+  const [resetNotice, setResetNotice] = useState(false);
+  const resetNoticeTimer = useRef(0);
+  const showResetNotice = useCallback(() => {
+    setResetNotice(true);
+    window.clearTimeout(resetNoticeTimer.current);
+    resetNoticeTimer.current = window.setTimeout(() => setResetNotice(false), 2200);
+  }, []);
+  useEffect(() => () => window.clearTimeout(resetNoticeTimer.current), []);
   const [raceStartPerf, setRaceStartPerf] = useState<number | null>(null);
 
   const progress = useRef<Progress>({ nextGate: 1, lap: 0, lapStart: 0, lapTimes: [] });
@@ -191,7 +272,11 @@ export function RaceScene({
       const remaining = startEpoch - Date.now();
       if (remaining > 0) {
         setPhase((p) => (p === "waiting" ? "countdown" : p));
-        setCountdown(Math.min(3, Math.ceil(remaining / 1000)));
+        const next = Math.min(3, Math.ceil(remaining / 1000));
+        setCountdown((current) => {
+          if (next !== current && next > 0) playCountdownBeep();
+          return next;
+        });
         return;
       }
       done = true;
@@ -202,6 +287,7 @@ export function RaceScene({
       setCountdown(0);
       setPhase((p) => (p === "waiting" || p === "countdown" ? "racing" : p));
       setGoFlash(true);
+      playGoHorn();
       window.setTimeout(() => setGoFlash(false), 900);
     };
     const id = window.setInterval(tick, 100);
@@ -233,12 +319,13 @@ export function RaceScene({
     };
   };
 
-  // Persist the panels' live settings onto the custom map so races on it inherit them.
-  const savableMap = adminMode && Boolean(customTrack);
+  // Persist the panels' live settings onto the map so races on it inherit them.
+  const savableMap = adminMode;
   const saveSettings = async (patch: {
     tuning?: VehicleTuning;
     graphics?: GraphicsSettings;
     checkpoints?: Checkpoint[];
+    spawn?: AuthoredPose | null;
   }) => {
     const res = await fetch(`/api/maps/${encodeURIComponent(track.id)}`, {
       method: "PATCH",
@@ -250,37 +337,63 @@ export function RaceScene({
   const saveTuning = savableMap ? () => saveSettings({ tuning }) : undefined;
   const saveGraphics = savableMap ? () => saveSettings({ graphics }) : undefined;
   const saveCheckpoints = savableMap ? () => saveSettings({ checkpoints }) : undefined;
+  const saveSpawn = savableMap ? () => saveSettings({ spawn: spawnPose }) : undefined;
 
-  // Drop a checkpoint at the car's current pose (button or the C key).
-  const dropCheckpoint = useCallback(() => {
+  // The car's current pose, flattened onto the ground plane. Both authoring tools capture
+  // the same thing: where the car is and which way it points.
+  const capturePose = useCallback((): AuthoredPose | null => {
     const body = chassisRef.current;
-    if (!body) return;
+    if (!body) return null;
     const t = body.translation();
     const r = body.rotation();
     const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
     const f = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
     const yaw = f.x * f.x + f.z * f.z > 1e-4 ? Math.atan2(f.x, f.z) : 0;
-    setCheckpoints((prev) => [...prev, { position: [t.x, t.y, t.z], rotationY: yaw }]);
+    return { position: [t.x, t.y, t.z], rotationY: yaw };
   }, []);
+
+  // Drop a checkpoint at the car's current pose (button or the C key).
+  const dropCheckpoint = useCallback(() => {
+    const pose = capturePose();
+    if (pose) setCheckpoints((prev) => [...prev, pose]);
+  }, [capturePose]);
+
+  // Set the start grid at the car's current pose (button or the G key). It also becomes the
+  // respawn target, so a reset from here drops back onto the new start line.
+  const setSpawnHere = useCallback(() => {
+    const pose = capturePose();
+    if (!pose) return;
+    setSpawnPose(pose);
+    adminRespawnRef.current = { position: pose.position, rotationY: pose.rotationY };
+  }, [capturePose]);
 
   useEffect(() => {
     if (!adminMode) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.code === "KeyC" && !event.repeat) {
+      if (event.repeat) return;
+      if (event.code === "KeyC") {
         event.preventDefault();
         dropCheckpoint();
+      } else if (event.code === "KeyG") {
+        event.preventDefault();
+        setSpawnHere();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [adminMode, dropCheckpoint]);
+  }, [adminMode, dropCheckpoint, setSpawnHere]);
 
   // Enforcement needs at least one checkpoint, so undoing/clearing to empty exits it.
   const undoCheckpoint = () => {
     setCheckpoints((prev) => prev.slice(0, -1));
     if (checkpoints.length <= 1) setEnforceOrder(false);
   };
+  // Confirmed, because the list now opens seeded with the map's saved loop — clearing it and
+  // saving is how a route gets thrown away.
   const clearCheckpoints = () => {
+    if (checkpoints.length > 0 && !window.confirm(`Clear all ${checkpoints.length} checkpoints?`)) {
+      return;
+    }
     setCheckpoints([]);
     setEnforceOrder(false);
   };
@@ -302,6 +415,7 @@ export function RaceScene({
         const totalMs = p.lapTimes.reduce((a, b) => a + b, 0);
         setResult({ totalMs, lapTimes: [...p.lapTimes] });
         setPhase("finished");
+        playFinishFanfare();
         onFinished?.(totalMs);
       }
     } else {
@@ -312,7 +426,7 @@ export function RaceScene({
   };
 
   return (
-    <div className="relative h-dvh w-full touch-none overflow-hidden bg-neutral-900">
+    <div className="relative h-dvh w-full touch-none overflow-hidden bg-[#17110b]">
       <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 6, -12], fov: 60 }}>
         <color attach="background" args={[track.skyColor]} />
         {graphics.fog && (
@@ -338,7 +452,11 @@ export function RaceScene({
         />
 
         <Physics>
-          <TrackView track={track} nextGate={nextGate} />
+          <TrackView track={track} />
+
+          {!freeDrive && <StartGate gate={track.gates[0]} />}
+
+          {adminMode && spawnPose && <SpawnMarker pose={spawnPose} accent={track.accent} />}
 
           {adminMode && checkpoints.length > 0 && (
             <CheckpointMarkers
@@ -362,6 +480,9 @@ export function RaceScene({
                 />
               </Suspense>
               {!freeDrive && (
+                <DirectionArrow bodyRef={chassisRef} targets={arrowTargets} accent={track.accent} />
+              )}
+              {!freeDrive && (
                 <LapTracker
                   bodyRef={chassisRef}
                   gates={track.gates}
@@ -369,6 +490,7 @@ export function RaceScene({
                   progress={progress}
                   onGatePass={onGatePass}
                   onWrongWay={setWrongWay}
+                  onReset={showResetNotice}
                 />
               )}
               {onTransform && <TransformBroadcaster bodyRef={chassisRef} onTransform={onTransform} />}
@@ -424,6 +546,9 @@ export function RaceScene({
         spectator={spectator}
         freeDrive={freeDrive}
         wrongWay={wrongWay}
+        resetNotice={resetNotice}
+        muted={muted}
+        onToggleMuted={toggleMuted}
         exitLabel={exitLabel}
         onExit={onExit}
       />
@@ -434,19 +559,24 @@ export function RaceScene({
         <GraphicsPanel settings={graphics} onChange={setGraphics} onSave={saveGraphics} />
       )}
       {adminMode && !spectator && (
-        <CheckpointPanel
+        <LayoutPanel
           count={checkpoints.length}
           enforce={enforceOrder}
+          hasSpawn={spawnPose !== null}
           onEnforceChange={setEnforceOrder}
           onDrop={dropCheckpoint}
           onUndo={undoCheckpoint}
           onClear={clearCheckpoints}
+          onSetSpawn={setSpawnHere}
+          onClearSpawn={() => setSpawnPose(null)}
           onSave={saveCheckpoints}
+          onSaveSpawn={saveSpawn}
         />
       )}
       {adminMode && !spectator && (
         <AdminMinimap
           track={track}
+          spawn={spawnPose}
           selfBody={chassisRef}
           onTeleport={(x, z) => {
             teleportRequestRef.current = { x, z };
@@ -464,7 +594,12 @@ export function RaceScene({
 // Track + gates
 // ---------------------------------------------------------------------------
 
-function TrackView({ track, nextGate }: { track: TrackDef; nextGate: number }) {
+/**
+ * TrackView — the ground/environment and its props. Gates are deliberately not drawn: players
+ * are guided by the arrow over the car, and admins see the loop through CheckpointMarkers,
+ * which shows the working checkpoint list rather than the last saved one.
+ */
+function TrackView({ track }: { track: TrackDef }) {
   return (
     <group>
       {!track.modelUrl && (
@@ -482,16 +617,6 @@ function TrackView({ track, nextGate }: { track: TrackDef; nextGate: number }) {
           <MapModel url={track.modelUrl} scale={track.modelScale ?? 1} />
         </Suspense>
       )}
-
-      {track.gates.map((gate, i) => (
-        <GateView
-          key={i}
-          gate={gate}
-          isStart={i === 0}
-          isNext={i === nextGate}
-          accent={track.accent}
-        />
-      ))}
 
       {track.decorations.map((d, i) => (
         <Decoration key={i} position={d.position} kind={d.kind} />
@@ -517,39 +642,6 @@ function MapModel({ url, scale }: { url: string; scale: number }) {
     <RigidBody type="fixed" colliders="trimesh">
       <primitive object={scene} scale={scale} />
     </RigidBody>
-  );
-}
-
-function GateView({
-  gate,
-  isStart,
-  isNext,
-  accent,
-}: {
-  gate: Gate;
-  isStart: boolean;
-  isNext: boolean;
-  accent: string;
-}) {
-  const color = isStart ? "#f8fafc" : accent;
-  const emissive = isNext ? accent : "#000000";
-  const emissiveIntensity = isNext ? 0.9 : 0;
-  const span = gate.width * 2 + 0.4;
-  return (
-    <group position={gate.position} rotation={[0, gate.rotationY, 0]}>
-      <mesh position={[gate.width, 1.6, 0]} castShadow>
-        <boxGeometry args={[0.4, 3.2, 0.4]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={emissiveIntensity} />
-      </mesh>
-      <mesh position={[-gate.width, 1.6, 0]} castShadow>
-        <boxGeometry args={[0.4, 3.2, 0.4]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={emissiveIntensity} />
-      </mesh>
-      <mesh position={[0, 3.2, 0]} castShadow>
-        <boxGeometry args={[span, 0.4, 0.4]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={emissiveIntensity} />
-      </mesh>
-    </group>
   );
 }
 
@@ -693,6 +785,10 @@ function RaceCarModel({
 
 /** Seconds of sustained driving away from the next gate before "WRONG WAY" shows. */
 const WRONG_WAY_AFTER_S = 1.5;
+/** …and how long before the car is put back on the last gate it passed. */
+const WRONG_WAY_RESET_S = 3;
+/** Clearance above the gate pose on that reset, so the car never lands inside the road. */
+const WRONG_WAY_RESET_LIFT = 0.3;
 /** Vertical tolerance for a gate crossing (keeps overpasses on custom maps honest). */
 const GATE_MAX_HEIGHT_DIFF = 6;
 
@@ -709,6 +805,7 @@ function LapTracker({
   progress,
   onGatePass,
   onWrongWay,
+  onReset,
 }: {
   bodyRef: RefObject<RapierRigidBody | null>;
   gates: Gate[];
@@ -716,10 +813,34 @@ function LapTracker({
   progress: RefObject<Progress>;
   onGatePass: () => void;
   onWrongWay: (wrong: boolean) => void;
+  onReset: () => void;
 }) {
   const prev = useRef<{ gate: number; z: number; x: number } | null>(null);
   const wrongForRef = useRef(0);
   const wrongShownRef = useRef(false);
+  const pendingResetRef = useRef<Gate | null>(null);
+
+  // The wrong-way reset is decided in useFrame but applied here, inside the physics step,
+  // like every other teleport in this scene — moving a body mid-frame would race the
+  // vehicle controller that runs on the same step.
+  useBeforePhysicsStep(() => {
+    const target = pendingResetRef.current;
+    const body = bodyRef.current;
+    if (!target || !body) return;
+    pendingResetRef.current = null;
+    const half = target.rotationY / 2;
+    body.setTranslation(
+      {
+        x: target.position[0],
+        y: target.position[1] + WRONG_WAY_RESET_LIFT,
+        z: target.position[2],
+      },
+      true,
+    );
+    body.setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }, true);
+    body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  });
 
   useFrame((_, dt) => {
     if (!active) {
@@ -759,6 +880,22 @@ function LapTracker({
     const dist = Math.hypot(dx, dz) || 1;
     const closingSpeed = -(vel.x * dx + vel.z * dz) / dist; // + = toward the gate
     wrongForRef.current = speed > 4 && closingSpeed < -2 ? wrongForRef.current + dt : 0;
+
+    // Keep it up long enough and the car is put back on the last gate it actually passed,
+    // facing the right way. The lap counter is untouched: `nextGate` is still the gate that
+    // was being driven to, so the recovery costs time and nothing else.
+    if (wrongForRef.current > WRONG_WAY_RESET_S) {
+      pendingResetRef.current = gates[(gi - 1 + gates.length) % gates.length];
+      onReset();
+      wrongForRef.current = 0;
+      prev.current = null; // the jump itself must not read as a gate crossing
+      if (wrongShownRef.current) {
+        wrongShownRef.current = false;
+        onWrongWay(false);
+      }
+      return;
+    }
+
     const wrong = wrongForRef.current > WRONG_WAY_AFTER_S;
     if (wrong !== wrongShownRef.current) {
       wrongShownRef.current = wrong;
@@ -780,14 +917,20 @@ function SpeedMeter({ bodyRef }: { bodyRef: RefObject<RapierRigidBody | null> })
     const tick = () => {
       const body = bodyRef.current;
       const el = speedEl.current;
-      if (body && el) {
+      if (body) {
         const v = body.linvel();
-        el.textContent = String(Math.round(Math.hypot(v.x, v.z) * 3.6));
+        const kmh = Math.hypot(v.x, v.z) * 3.6;
+        if (el) el.textContent = String(Math.round(kmh));
+        // Reuse this loop for the engine note rather than adding a second rAF.
+        setEngineSpeed(kmh);
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      stopEngine();
+    };
   }, [bodyRef]);
 
   return (
@@ -853,7 +996,15 @@ function AdminTeleporter({
 
     const originY = fallbackY + TELEPORT_CAST_HEIGHT;
     const ray = new rapier.Ray({ x: req.x, y: originY, z: req.z }, { x: 0, y: -1, z: 0 });
-    const hit = world.castRay(ray, TELEPORT_CAST_HEIGHT * 3, true, undefined, undefined, undefined, body);
+    const hit = world.castRay(
+      ray,
+      TELEPORT_CAST_HEIGHT * 3,
+      true,
+      rapier.QueryFilterFlags.EXCLUDE_SENSORS, // land on the map, not on another car
+      undefined,
+      undefined,
+      body,
+    );
     const y = hit ? originY - hit.timeOfImpact + 1.1 : fallbackY + 1.2;
 
     // Keep the current heading (flattened onto the ground).
@@ -872,6 +1023,178 @@ function AdminTeleporter({
   });
 
   return null;
+}
+
+/**
+ * DirectionArrow — the flat chevron floating over the local car, aimed down the route.
+ *
+ * With the gates themselves invisible, this is what tells a player where to go. Its heading is
+ * the weighted sum of the unit directions to the next few gates, so it reads as "the way the
+ * track goes" rather than "that post right there" and stops flicking as gates are passed. The
+ * shape is a flat unlit chevron lying in the ground plane — no shading, no depth to it.
+ */
+function DirectionArrow({
+  bodyRef,
+  targets,
+  accent,
+}: {
+  bodyRef: RefObject<RapierRigidBody | null>;
+  /** The next few gate positions, nearest first. */
+  targets: Vec3[];
+  accent: string;
+}) {
+  const group = useRef<THREE.Group>(null);
+
+  const shape = useMemo(() => {
+    // Drawn in the XY plane with the tip at -Y; the mesh is laid flat so -Y becomes +Z.
+    const s = new THREE.Shape();
+    s.moveTo(0, -1.05);
+    s.lineTo(0.85, 0.55);
+    s.lineTo(0, 0.15);
+    s.lineTo(-0.85, 0.55);
+    s.closePath();
+    return s;
+  }, []);
+
+  useFrame((state, dt) => {
+    const g = group.current;
+    const body = bodyRef.current;
+    if (!g) return;
+    if (!body || targets.length === 0) {
+      g.visible = false;
+      return;
+    }
+    g.visible = true;
+    const t = body.translation();
+
+    // Blend the unit directions so a distant gate can't dominate by sheer distance.
+    let sx = 0;
+    let sz = 0;
+    let fallbackX = 0;
+    let fallbackZ = 0;
+    targets.forEach((target, i) => {
+      const dx = target[0] - t.x;
+      const dz = target[2] - t.z;
+      const distance = Math.hypot(dx, dz) || 1;
+      if (i === 0) {
+        fallbackX = dx / distance;
+        fallbackZ = dz / distance;
+      }
+      if (distance < ARROW_SKIP_RADIUS) return;
+      const weight = ARROW_WEIGHTS[i] ?? 0.2;
+      sx += (dx / distance) * weight;
+      sz += (dz / distance) * weight;
+    });
+    // Every gate too close, or the blend cancelled itself out — fall back to the next one.
+    if (Math.hypot(sx, sz) < 1e-3) {
+      sx = fallbackX;
+      sz = fallbackZ;
+    }
+
+    const bob = Math.sin(state.clock.elapsedTime * 3) * 0.1;
+    g.position.set(t.x, t.y + ARROW_HEIGHT + bob, t.z);
+
+    // Turn the short way round, at a rate that settles in a few frames.
+    const yaw = Math.atan2(sx, sz);
+    const delta = ((yaw - g.rotation.y + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+    g.rotation.y += delta * Math.min(1, dt * 10);
+  });
+
+  return (
+    <group ref={group} visible={false}>
+      {/* Backing plate, a hair below and larger, so the chevron keeps its edge on any map. */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} scale={1.18}>
+        <shapeGeometry args={[shape]} />
+        <meshBasicMaterial color="#0b1220" transparent opacity={0.55} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <shapeGeometry args={[shape]} />
+        <meshBasicMaterial color={accent} side={THREE.DoubleSide} toneMapped={false} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * StartGate — the start/finish archway over gate 0.
+ *
+ * Built like CheckpointMarkers (posts straddling the opening on the pose's local ±X, so the
+ * arch spans the road) with a checkered banner across the top. Every other gate is invisible,
+ * so this is the one landmark that says "the lap starts here". Purely visual — no collider.
+ * Sunk by START_GATE_DROP because gate poses are captured at the car's chassis height, not at
+ * the road surface.
+ */
+function StartGate({ gate }: { gate: Gate }) {
+  const texture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#f8f5ee";
+      ctx.fillRect(0, 0, 64, 64);
+      ctx.fillStyle = "#191410";
+      ctx.fillRect(0, 0, 32, 32);
+      ctx.fillRect(32, 32, 32, 32);
+    }
+    const map = new THREE.CanvasTexture(canvas);
+    map.wrapS = THREE.RepeatWrapping;
+    map.wrapT = THREE.RepeatWrapping;
+    map.magFilter = THREE.NearestFilter;
+    // Two rows of checks, and as many columns as it takes to keep them square.
+    const rows = CHECKER_ROWS;
+    const columns = Math.max(2, Math.round((gate.width * 2) / (BANNER_HEIGHT / rows)));
+    map.repeat.set(columns, rows);
+    return map;
+  }, [gate.width]);
+
+  useEffect(() => () => texture.dispose(), [texture]);
+
+  const span = gate.width * 2 + POST_THICKNESS;
+  return (
+    <group
+      position={[gate.position[0], gate.position[1] - START_GATE_DROP, gate.position[2]]}
+      rotation={[0, gate.rotationY, 0]}
+    >
+      {[gate.width, -gate.width].map((x) => (
+        <mesh key={x} position={[x, POST_HEIGHT / 2, 0]} castShadow>
+          <boxGeometry args={[POST_THICKNESS, POST_HEIGHT, POST_THICKNESS]} />
+          <meshStandardMaterial color="#f8f5ee" />
+        </mesh>
+      ))}
+      <mesh position={[0, POST_HEIGHT + BANNER_HEIGHT / 2, 0]} castShadow>
+        <boxGeometry args={[span, BANNER_HEIGHT, POST_THICKNESS]} />
+        <meshStandardMaterial map={texture} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * SpawnMarker — admin-only preview of the authored start: a white gantry over the exact pose
+ * every car spawns on, and an arrow along the direction they will face.
+ */
+function SpawnMarker({ pose, accent }: { pose: AuthoredPose; accent: string }) {
+  return (
+    <group>
+      <group position={pose.position} rotation={[0, pose.rotationY, 0]}>
+        {[3.6, -3.6].map((x) => (
+          <mesh key={x} position={[x, 0.8, 0]}>
+            <boxGeometry args={[0.3, 3.2, 0.3]} />
+            <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.35} />
+          </mesh>
+        ))}
+        <mesh position={[0, 2.4, 0]}>
+          <boxGeometry args={[7.5, 0.3, 0.3]} />
+          <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.35} />
+        </mesh>
+        {/* Cones point along +Y, so +90° about X aims this one down the car's forward axis. */}
+        <mesh position={[0, 0.2, 2.4]} rotation={[Math.PI / 2, 0, 0]}>
+          <coneGeometry args={[0.7, 1.6, 4]} />
+          <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.6} />
+        </mesh>
+      </group>
+    </group>
+  );
 }
 
 /**

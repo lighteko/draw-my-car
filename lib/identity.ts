@@ -13,8 +13,9 @@ import { useEffect, useSyncExternalStore } from "react";
 const DEVICE_KEY = "dmc_device_id";
 const USERNAME_KEY = "dmc_username";
 
-const ADJECTIVES = ["Turbo", "Neon", "Rusty", "Zippy", "Drifty", "Mighty", "Sonic", "Wild"];
-const NOUNS = ["Comet", "Falcon", "Bolt", "Racer", "Piston", "Gecko", "Rocket", "Bandit"];
+// Desert-caravan flavour, to match the Jericho theme.
+const ADJECTIVES = ["질주하는", "모래바람", "황금", "뜨거운", "번개같은", "용맹한", "거친", "빛나는"];
+const NOUNS = ["낙타", "전차", "매", "사자", "유성", "바퀴", "방랑자", "나팔"];
 
 function randomUsername(): string {
   const a = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];

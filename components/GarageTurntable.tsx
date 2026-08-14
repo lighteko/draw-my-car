@@ -37,7 +37,7 @@ export function GarageTurntable({ glbUrl }: { glbUrl: string | null }) {
         shadow-camera-bottom={-8}
       />
       {/* Cool rim light from behind for the showroom look. */}
-      <pointLight position={[-4, 3.5, -5]} intensity={40} color="#22d3ee" distance={22} decay={2} />
+      <pointLight position={[-4, 3.5, -5]} intensity={40} color="#e0a84e" distance={22} decay={2} />
       <pointLight position={[5, 2, -4]} intensity={22} color="#f59e0b" distance={18} decay={2} />
 
       <group>
@@ -77,7 +77,7 @@ function Platform() {
       {/* Glowing accent rim (unlit so it reads as a light line). */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
         <torusGeometry args={[3, 0.035, 8, 90]} />
-        <meshBasicMaterial color="#22d3ee" toneMapped={false} />
+        <meshBasicMaterial color="#e0a84e" toneMapped={false} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
         <ringGeometry args={[2.4, 2.95, 72]} />

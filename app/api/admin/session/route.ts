@@ -21,7 +21,7 @@ export async function GET(): Promise<NextResponse> {
 export async function POST(req: Request): Promise<NextResponse> {
   if (!isAdminConfigured()) {
     return NextResponse.json(
-      { error: "Admin access is not configured. Set ADMIN_PASSWORD in the server environment." },
+      { error: "관리자 접근이 설정되지 않았습니다. 서버에 ADMIN_PASSWORD를 설정하세요." },
       { status: 503 },
     );
   }
@@ -31,11 +31,11 @@ export async function POST(req: Request): Promise<NextResponse> {
     const body = (await req.json()) as { password?: unknown };
     if (typeof body.password === "string") password = body.password;
   } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+    return NextResponse.json({ error: "잘못된 요청 형식입니다" }, { status: 400 });
   }
 
   if (!password || !verifyAdminPassword(password)) {
-    return NextResponse.json({ error: "Wrong password" }, { status: 401 });
+    return NextResponse.json({ error: "비밀번호가 틀렸습니다" }, { status: 401 });
   }
 
   const store = await cookies();

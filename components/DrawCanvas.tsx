@@ -139,16 +139,16 @@ export function DrawCanvas({
           onClick={clear}
           className="rounded-md border border-black/15 px-3 py-1.5 font-medium hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
         >
-          Clear
+          지우기
         </button>
 
         <label className="cursor-pointer rounded-md border border-black/15 px-3 py-1.5 font-medium hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10">
-          Upload image
+          이미지 올리기
           <input type="file" accept="image/*" onChange={onUpload} className="hidden" />
         </label>
 
         <label className="flex items-center gap-2 text-neutral-500">
-          Brush
+          붓 굵기
           <input
             type="range"
             min={2}
@@ -159,7 +159,7 @@ export function DrawCanvas({
         </label>
 
         <span className="draw-status ml-auto text-xs text-neutral-400">
-          {hasContent ? "ready to generate" : "draw or upload a car"}
+          {hasContent ? "생성할 준비 완료" : "차를 그리거나 이미지를 올리세요"}
         </span>
       </div>
     </div>

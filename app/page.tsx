@@ -13,8 +13,8 @@ import { CreateCarModal } from "@/components/CreateCarModal";
 
 /**
  * Home = the garage menu, laid out like a console racing game: top HUD, a left car-info
- * panel with stats, a car-select sidebar (render thumbnails), a drag-to-spin hero
- * turntable, and a big PLAY action. Turntable is WebGL (dynamic, ssr:false).
+ * panel, a car-select sidebar (render thumbnails), a drag-to-spin hero turntable, and a big
+ * PLAY action. Turntable is WebGL (dynamic, ssr:false).
  */
 const GarageTurntable = dynamic(
   () => import("@/components/GarageTurntable").then((m) => m.GarageTurntable),
@@ -66,7 +66,8 @@ export default function Home() {
   }, []);
 
   const multiplayer = hasBrowserSupabase();
-  const canPlay = count > 0 && multiplayer;
+  // No car is fine — the race falls back to the placeholder rig. Only Supabase gates hosting.
+  const canPlay = multiplayer;
 
   const play = useCallback(async () => {
     setCreatingRoom(true);
@@ -93,21 +94,17 @@ export default function Home() {
       <header className="garage-header safe-t safe-x absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-3">
         <div>
           <div className="neon-title text-2xl leading-none sm:text-3xl">
-            DRAW<span className="not-italic text-cyan-300"> &amp; </span>DRIVE
+            AI <span className="text-amber-300">바이블</span> 드라이브
           </div>
-          <div className="garage-kicker mt-0.5 font-mono text-[10px] uppercase tracking-[0.35em] text-cyan-400/70">
-            Garage
+          <div className="garage-kicker mt-0.5 font-mono text-[10px] uppercase tracking-[0.35em] text-amber-400/70">
+            차고
           </div>
         </div>
+        {/* No map-lab link: it is an admin tool, reached by typing /admin/maps, not something
+            players should find in the garage. The route still guards itself with a password. */}
         <div className="flex items-center gap-2">
-          <Link
-            href="/admin/maps"
-            className="btn-ghost hidden px-3 py-2 text-[10px] sm:inline-flex"
-          >
-            Map lab
-          </Link>
           <div className="game-panel hidden items-center gap-2 rounded-full px-4 py-2 text-sm sm:flex">
-            <span className="text-cyan-300">◈</span> {count} car{count === 1 ? "" : "s"}
+            <span className="text-amber-300">◈</span> 차량 {count}대
           </div>
           {ready && <ProfileChip username={username} onEdit={() => setEditingName(true)} />}
         </div>
@@ -117,18 +114,41 @@ export default function Home() {
       {cars !== null && count === 0 && (
         <div className="absolute inset-0 z-10 flex items-center justify-center px-6">
           <div className="garage-empty game-panel dmc-rise flex max-w-sm flex-col items-center gap-4 rounded-3xl p-8 text-center">
-            <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-b from-cyan-300 to-cyan-600 text-4xl font-light leading-none text-[#04131b] shadow-[0_0_30px_rgba(34,211,238,0.5)]">
+            <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-b from-amber-300 to-amber-600 text-4xl font-light leading-none text-[#2a1608] shadow-[0_0_30px_rgba(224,168,78,0.5)]">
               +
             </span>
-            <h2 className="font-heading text-2xl font-bold uppercase tracking-wide">
-              Build your first car
+            <h2 className="font-display text-2xl font-bold uppercase tracking-wide">
+              첫 차를 만들어 보세요
             </h2>
             <p className="text-sm text-white/60">
-              Sketch a car and we&apos;ll turn it into a drivable 3D model.
+              그림을 그리면 달릴 수 있는 3D 차량으로 만들어 드립니다.
             </p>
             <button type="button" onClick={() => setModalOpen(true)} className="btn-race mt-1 px-8 py-3.5 text-base">
-              Draw a car
+              차 그리기
             </button>
+            {/* Nothing drawn yet is no reason to sit in the garage — the race scene falls
+                back to the placeholder rig when no car GLB is given. */}
+            <div className="garage-empty-practice flex flex-wrap items-center justify-center gap-2">
+              <Link
+                href="/race/random"
+                onClick={() => {
+                  if (isTouchDevice()) void enterFullscreen();
+                }}
+                className="btn-ghost px-4 py-2 text-xs"
+              >
+                기본 차량으로 연습
+              </Link>
+              {multiplayer && (
+                <button
+                  type="button"
+                  onClick={play}
+                  disabled={creatingRoom}
+                  className="btn-ghost px-4 py-2 text-xs"
+                >
+                  {creatingRoom ? "방 만드는 중…" : "기본 차량으로 방 만들기"}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -149,8 +169,8 @@ export default function Home() {
           <button
             type="button"
             onClick={() => setModalOpen(true)}
-            aria-label="Add car"
-            className="garage-car-thumb flex aspect-square w-20 shrink-0 items-center justify-center rounded-xl border border-dashed border-white/25 text-2xl text-white/60 transition hover:border-cyan-400/60 hover:text-white md:w-full"
+            aria-label="차 추가"
+            className="garage-car-thumb flex aspect-square w-20 shrink-0 items-center justify-center rounded-xl border border-dashed border-white/25 text-2xl text-white/60 transition hover:border-amber-400/60 hover:text-white md:w-full"
           >
             +
           </button>
@@ -161,31 +181,29 @@ export default function Home() {
       {selected && (
         <div className="garage-actions safe-b safe-x absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-3 pb-2">
           <div className="garage-car-name font-heading text-xl font-bold uppercase italic tracking-wide md:hidden">
-            {selected.name ?? "Untitled"}
+            {selected.name ?? "이름 없음"}
           </div>
           <button
             type="button"
             onClick={play}
             disabled={!canPlay || creatingRoom}
             title={
-              count === 0
-                ? "Create a car first"
-                : multiplayer
-                  ? "Create a room and invite friends"
-                  : "Multiplayer needs Supabase configured"
+              multiplayer
+                ? "방을 만들고 친구를 초대합니다"
+                : "멀티플레이는 Supabase 설정이 필요합니다"
             }
             className="btn-race w-64 max-w-[80vw] px-10 py-4 text-lg"
           >
             {creatingRoom ? (
-              "Creating…"
+              "방 만드는 중…"
             ) : (
               <>
-                <span aria-hidden>▶</span> Play
+                <span aria-hidden>▶</span> 플레이
               </>
             )}
             {!multiplayer && (
-              <span className="absolute -right-2 -top-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold not-italic text-black">
-                soon
+              <span className="absolute -right-2 -top-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-medium not-italic text-black">
+                준비 중
               </span>
             )}
           </button>
@@ -196,7 +214,7 @@ export default function Home() {
             }}
             className="btn-ghost px-5 py-2.5 text-sm"
           >
-            Practice
+            연습 주행
           </Link>
         </div>
       )}
@@ -224,9 +242,9 @@ function ProfileChip({ username, onEdit }: { username: string; onEdit: () => voi
     <button
       type="button"
       onClick={onEdit}
-      className="game-panel flex items-center gap-2.5 rounded-full py-1.5 pl-1.5 pr-3 transition hover:border-cyan-400/50"
+      className="game-panel flex items-center gap-2.5 rounded-full py-1.5 pl-1.5 pr-3 transition hover:border-amber-400/50"
     >
-      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-b from-cyan-300 to-cyan-600 font-heading text-sm font-bold text-[#04131b]">
+      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-600 font-heading text-sm font-bold text-[#2a1608]">
         {initial}
       </span>
       <span className="max-w-[8rem] truncate text-sm font-medium">{username}</span>
@@ -242,14 +260,14 @@ function CarThumb({ car, active, onClick }: { car: Car; active: boolean; onClick
     <button
       type="button"
       onClick={onClick}
-      aria-label={car.name ?? "car"}
+      aria-label={car.name ?? "차량"}
       className={`garage-car-thumb aspect-square w-20 shrink-0 overflow-hidden rounded-xl border bg-black/40 transition md:w-full ${
-        active ? "border-cyan-400 ring-2 ring-cyan-400/40" : "border-white/15 hover:border-white/40"
+        active ? "border-amber-400 ring-2 ring-amber-400/40" : "border-white/15 hover:border-white/40"
       }`}
     >
       {car.renderUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={car.renderUrl} alt={car.name ?? "car"} className="h-full w-full object-cover" />
+        <img src={car.renderUrl} alt={car.name ?? "차량"} className="h-full w-full object-cover" />
       ) : (
         <span className="flex h-full w-full items-center justify-center font-heading text-lg font-bold text-white/70">
           {(car.name ?? "?").charAt(0).toUpperCase()}
@@ -260,37 +278,35 @@ function CarThumb({ car, active, onClick }: { car: Car; active: boolean; onClick
 }
 
 function CarInfoPanel({ car }: { car: Car }) {
-  const s = carStats(car.id);
+  const created = new Date(car.createdAt);
   return (
     <div className="game-panel w-72 rounded-2xl p-5">
-      <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-cyan-400/70">
-        Custom build
+      <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-amber-400/70">
+        내가 만든 차
       </div>
-      <h2 className="font-heading text-2xl font-bold uppercase italic leading-tight tracking-wide">
-        {car.name ?? "Untitled"}
+      <h2 className="font-display text-2xl font-bold leading-tight tracking-wide">
+        {car.name ?? "이름 없음"}
       </h2>
-      <div className="mt-4">
-        <StatBar label="Top speed" value={`${s.topSpeed} km/h`} pct={s.bars.topSpeed} />
-        <StatBar label="Acceleration" value={`${s.accel.toFixed(2)} s`} pct={s.bars.accel} />
-        <StatBar label="Handling" value={`${s.handling.toFixed(2)} G`} pct={s.bars.handling} />
-      </div>
+      <dl className="mt-4 space-y-2 text-[11px]">
+        <Fact label="만든 날">
+          {`${created.getFullYear()}. ${created.getMonth() + 1}. ${created.getDate()}.`}
+        </Fact>
+        <Fact label="3D 모델">{car.glbUrl ? "완성" : "기본 차량으로 주행"}</Fact>
+      </dl>
     </div>
   );
 }
 
-function StatBar({ label, value, pct }: { label: string; value: string; pct: number }) {
+/**
+ * Only things the game can actually back up. The old panel showed top speed / acceleration /
+ * handling bars derived from a hash of the car id — they looked like a spec sheet but had no
+ * effect on the drive, so every car was secretly identical.
+ */
+function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="mb-2.5 last:mb-0">
-      <div className="flex justify-between text-[11px] uppercase tracking-wide">
-        <span className="text-white/55">{label}</span>
-        <span className="font-medium text-white/90">{value}</span>
-      </div>
-      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-        <div
-          className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-cyan-600"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+    <div className="flex justify-between gap-3">
+      <dt className="text-white/45">{label}</dt>
+      <dd className="truncate font-medium text-white/85">{children}</dd>
     </div>
   );
 }
@@ -309,8 +325,8 @@ function NicknameModal({
   return (
     <div className="nickname-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <div className="nickname-dialog game-panel dmc-rise w-full max-w-sm rounded-2xl p-6">
-        <h2 className="font-heading text-xl font-bold uppercase tracking-wide">Driver name</h2>
-        <p className="mt-1 text-sm text-white/55">This is how other racers see you.</p>
+        <h2 className="font-heading text-xl font-bold uppercase tracking-wide">드라이버 이름</h2>
+        <p className="mt-1 text-sm text-white/55">다른 참가자에게 이 이름으로 보입니다.</p>
         <input
           autoFocus
           value={name}
@@ -319,11 +335,11 @@ function NicknameModal({
           onKeyDown={(e) => {
             if (e.key === "Enter" && trimmed) onSave(trimmed);
           }}
-          className="mt-4 w-full rounded-lg border border-white/15 bg-black/40 px-4 py-2.5 text-white outline-none transition focus:border-cyan-400"
+          className="mt-4 w-full rounded-lg border border-white/15 bg-black/40 px-4 py-2.5 text-white outline-none transition focus:border-amber-400"
         />
         <div className="mt-5 flex justify-end gap-3">
           <button type="button" onClick={onCancel} className="btn-ghost px-5 py-2.5 text-sm">
-            Cancel
+            취소
           </button>
           <button
             type="button"
@@ -331,7 +347,7 @@ function NicknameModal({
             onClick={() => onSave(trimmed)}
             className="btn-race px-6 py-2.5 text-sm"
           >
-            Save
+            저장
           </button>
         </div>
       </div>
@@ -339,24 +355,3 @@ function NicknameModal({
   );
 }
 
-/** Deterministic, stable "spec sheet" so each car has consistent showroom stats. */
-function carStats(id: string) {
-  let h = 2166136261;
-  for (let i = 0; i < id.length; i++) {
-    h ^= id.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const a = (h & 0xff) / 255;
-  const b = ((h >> 8) & 0xff) / 255;
-  const c = ((h >> 16) & 0xff) / 255;
-  return {
-    topSpeed: Math.round(250 + a * 110), // 250–360 km/h
-    accel: 2.2 + (1 - b) * 2.6, // 2.2–4.8 s
-    handling: 1.0 + c * 1.2, // 1.0–2.2 G
-    bars: {
-      topSpeed: Math.round(35 + a * 63),
-      accel: Math.round(35 + b * 63),
-      handling: Math.round(35 + c * 63),
-    },
-  };
-}

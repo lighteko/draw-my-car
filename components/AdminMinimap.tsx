@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrthographicCamera, useGLTF } from "@react-three/drei";
 import type { RapierRigidBody } from "@react-three/rapier";
-import type { TrackDef } from "@/lib/tracks";
+import type { AuthoredPose, TrackDef } from "@/lib/tracks";
 
 /**
  * AdminMinimap — a top-down orthographic view of the current map, for admin test drives.
@@ -28,10 +28,13 @@ interface Bounds {
 
 export function AdminMinimap({
   track,
+  spawn,
   selfBody,
   onTeleport,
 }: {
   track: TrackDef;
+  /** The staged start pose, drawn so the admin can see where the grid sits. */
+  spawn?: AuthoredPose | null;
   selfBody: RefObject<RapierRigidBody | null>;
   /** World XZ the admin clicked. The scene teleports the car there and moves the respawn. */
   onTeleport: (x: number, z: number) => void;
@@ -105,6 +108,14 @@ export function AdminMinimap({
   };
 
   const markerPx = marker ? project(marker.x, marker.z) : null;
+  const spawnPx = spawn ? project(spawn.position[0], spawn.position[2]) : null;
+  const gate0 = track.gates[0];
+  const startPx = gate0 ? project(gate0.position[0], gate0.position[2]) : null;
+  // Screen angle of the start heading: +X is right and +Z is down, so heading → (sin, cos).
+  // The quarter turn lays the marker across the track, matching the 3D mat.
+  const startAngle = gate0
+    ? (Math.atan2(Math.cos(gate0.rotationY), Math.sin(gate0.rotationY)) * 180) / Math.PI + 90
+    : 0;
 
   return (
     <div className="pointer-events-none absolute left-1/2 top-4 z-20 flex -translate-x-1/2 flex-col items-center">
@@ -159,6 +170,13 @@ export function AdminMinimap({
             className="pointer-events-none absolute inset-0"
             aria-hidden
           >
+            <defs>
+              <pattern id="amm-checker" width={7} height={7} patternUnits="userSpaceOnUse">
+                <rect width={7} height={7} fill="#f8f5ee" />
+                <rect width={3.5} height={3.5} fill="#191410" />
+                <rect x={3.5} y={3.5} width={3.5} height={3.5} fill="#191410" />
+              </pattern>
+            </defs>
             {track.gates.length > 0 && (
               <polygon
                 points={gatePath}
@@ -168,6 +186,18 @@ export function AdminMinimap({
                 strokeLinejoin="round"
               />
             )}
+            {startPx && (
+              <rect
+                x={startPx.x - 7}
+                y={startPx.y - 4.5}
+                width={14}
+                height={9}
+                fill="url(#amm-checker)"
+                stroke="rgba(0,0,0,0.55)"
+                strokeWidth={1}
+                transform={`rotate(${startAngle.toFixed(1)} ${startPx.x.toFixed(1)} ${startPx.y.toFixed(1)})`}
+              />
+            )}
             {markerPx && (
               <g>
                 <circle
@@ -175,11 +205,22 @@ export function AdminMinimap({
                   cy={markerPx.y}
                   r={7}
                   fill="none"
-                  stroke="#22d3ee"
+                  stroke="#e0a84e"
                   strokeWidth={1.5}
                 />
-                <circle cx={markerPx.x} cy={markerPx.y} r={1.5} fill="#22d3ee" />
+                <circle cx={markerPx.x} cy={markerPx.y} r={1.5} fill="#e0a84e" />
               </g>
+            )}
+            {spawnPx && spawn && (
+              // Arrowhead pointing the way cars will face. World +X is right and +Z is down
+              // on this projection, so the heading maps to (sin, cos) straight through.
+              <polygon
+                points={spawnArrow(spawnPx.x, spawnPx.y, spawn.rotationY)}
+                fill="#ffffff"
+                stroke="rgba(0,0,0,0.6)"
+                strokeWidth={1}
+                strokeLinejoin="round"
+              />
             )}
             {carDot && (
               <circle
@@ -193,12 +234,25 @@ export function AdminMinimap({
             )}
           </svg>
         </div>
-        <div className="px-1 pt-1 text-center font-mono text-[9px] uppercase tracking-wider text-cyan-200/70">
-          Click map to teleport
+        <div className="px-1 pt-1 text-center font-mono text-[9px] uppercase tracking-wider text-amber-200/70">
+          맵을 클릭하면 이동합니다
         </div>
       </div>
     </div>
   );
+}
+
+/** Triangle points for the start marker at pixel (x, y) facing world yaw. */
+function spawnArrow(x: number, y: number, yaw: number): string {
+  const dx = Math.sin(yaw);
+  const dy = Math.cos(yaw);
+  const px = -dy;
+  const py = dx;
+  return [
+    `${(x + dx * 8).toFixed(1)},${(y + dy * 8).toFixed(1)}`,
+    `${(x - dx * 4 + px * 5).toFixed(1)},${(y - dy * 4 + py * 5).toFixed(1)}`,
+    `${(x - dx * 4 - px * 5).toFixed(1)},${(y - dy * 4 - py * 5).toFixed(1)}`,
+  ].join(" ");
 }
 
 /** Kicks a render whenever bounds change (the demand loop is otherwise idle). */

@@ -45,11 +45,11 @@ export function AdminGate({ children }: { children: ReactNode }) {
         body: JSON.stringify({ password }),
       });
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (!res.ok) throw new Error(body?.error ?? `Sign-in failed (${res.status})`);
+      if (!res.ok) throw new Error(body?.error ?? `로그인 실패 (${res.status})`);
       setPassword("");
       setState("open");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Sign-in failed");
+      setError(cause instanceof Error ? cause.message : "로그인에 실패했습니다");
     } finally {
       setBusy(false);
     }
@@ -69,36 +69,36 @@ export function AdminGate({ children }: { children: ReactNode }) {
           onClick={() => void signOut()}
           className="fixed bottom-4 left-4 z-50 rounded-full border border-white/15 bg-black/60 px-4 py-2 font-mono text-[11px] text-white/60 backdrop-blur transition hover:border-red-400/40 hover:text-red-300"
         >
-          🔒 Lock admin
+          🔒 관리자 잠그기
         </button>
       </>
     );
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-[#070b12] px-5 text-white">
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(34,211,238,0.12),transparent_35%),radial-gradient(circle_at_90%_35%,rgba(249,115,22,0.08),transparent_30%)]" />
+    <main className="flex min-h-dvh items-center justify-center bg-[#17110b] px-5 text-white">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(224,168,78,0.12),transparent_35%),radial-gradient(circle_at_90%_35%,rgba(249,115,22,0.08),transparent_30%)]" />
       <div className="game-panel relative w-full max-w-sm rounded-2xl p-6 sm:p-8">
-        <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.38em] text-cyan-300/70">
-          Draw &amp; Drive / Admin
+        <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.38em] text-amber-300/70">
+          AI 바이블 드라이브 / 관리자
         </p>
-        <h1 className="font-heading text-3xl font-bold uppercase italic">Restricted area</h1>
+        <h1 className="font-display text-3xl font-bold">관리자 전용</h1>
 
         {state === "checking" && (
-          <p className="mt-5 animate-pulse font-mono text-sm text-white/45">Checking session…</p>
+          <p className="mt-5 animate-pulse font-mono text-sm text-white/45">세션 확인 중…</p>
         )}
 
         {state === "unconfigured" && (
           <p className="mt-5 rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-sm text-amber-200">
-            Admin access is not configured. Set <code className="font-mono">ADMIN_PASSWORD</code> in
-            the server environment and restart.
+            관리자 접근이 설정되지 않았습니다. 서버 환경 변수에
+            <code className="font-mono">ADMIN_PASSWORD</code>를 설정하고 다시 시작하세요.
           </p>
         )}
 
         {state === "locked" && (
           <form onSubmit={signIn} className="mt-5">
             <label className="block text-xs text-white/55">
-              <span className="mb-1.5 block">Admin password</span>
+              <span className="mb-1.5 block">관리자 비밀번호</span>
               <input
                 type="password"
                 value={password}
@@ -119,7 +119,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
               </div>
             )}
             <button type="submit" disabled={busy} className="btn-race mt-5 w-full px-6 py-3 text-sm">
-              {busy ? "Checking…" : "Enter map lab"}
+              {busy ? "확인 중…" : "맵 제작실 입장"}
             </button>
           </form>
         )}

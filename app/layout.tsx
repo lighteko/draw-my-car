@@ -1,10 +1,14 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono, Rajdhani } from "next/font/google";
+import { Black_Han_Sans, Geist_Mono, Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
+import { RotateGate } from "@/components/RotateGate";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Korean-first body face — the UI is entirely in Korean, so Latin-only faces would leave
+// every label to a system fallback.
+const notoSansKr = Noto_Sans_KR({
+  variable: "--font-sans-kr",
   subsets: ["latin"],
+  weight: ["400", "500", "700"],
 });
 
 const geistMono = Geist_Mono({
@@ -12,18 +16,23 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// Sporty, condensed display face for titles/menus.
-const rajdhani = Rajdhani({
-  variable: "--font-rajdhani",
+// Heavy poster face for titles/menus — carries the desert-fortress look, and unlike the old
+// condensed Latin face it actually has Hangul.
+const blackHanSans = Black_Han_Sans({
+  variable: "--font-heading-kr",
   subsets: ["latin"],
-  weight: ["500", "600", "700"],
+  weight: ["400"],
 });
 
 export const metadata: Metadata = {
-  title: "Draw & Drive",
-  description: "Draw a car, then race your friends.",
+  title: "AI 바이블 드라이브",
+  description: "차를 그리고, 여리고 성벽을 달리세요.",
   // Launch fullscreen when added to the home screen (esp. iOS, which lacks the FS API).
-  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Draw & Drive" },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "AI 바이블 드라이브",
+  },
   other: { "mobile-web-app-capable": "yes" },
 };
 
@@ -33,7 +42,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  themeColor: "#07070c",
+  themeColor: "#17110b",
 };
 
 export default function RootLayout({
@@ -43,10 +52,13 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${rajdhani.variable} h-full antialiased`}
+      lang="ko"
+      className={`${notoSansKr.variable} ${geistMono.variable} ${blackHanSans.variable} h-full antialiased`}
     >
-      <body className="min-h-dvh">{children}</body>
+      <body className="min-h-dvh">
+        {children}
+        <RotateGate />
+      </body>
     </html>
   );
 }

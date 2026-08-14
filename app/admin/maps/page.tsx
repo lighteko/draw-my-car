@@ -3,8 +3,8 @@ import { AdminGate } from "@/components/AdminGate";
 import { MapAdmin } from "@/components/MapAdmin";
 
 export const metadata: Metadata = {
-  title: "Map Lab | Draw & Drive",
-  description: "Upload and test custom driving environments.",
+  title: "맵 제작실 | AI 바이블 드라이브",
+  description: "주행 환경을 올리고 테스트합니다.",
 };
 
 export default function MapAdminPage() {

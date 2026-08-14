@@ -13,15 +13,15 @@ export default async function RoomPage({ params }: { params: Promise<{ code: str
   if (!hasSupabase()) {
     return (
       <Notice
-        title="Multiplayer isn't configured"
-        body="Set the SUPABASE_* environment variables to enable rooms."
+        title="멀티플레이가 설정되지 않았습니다"
+        body="방 기능을 쓰려면 SUPABASE_* 환경 변수를 설정하세요."
       />
     );
   }
 
   const room = await getRoom(code).catch(() => undefined);
   if (!room) {
-    return <Notice title="Room not found" body={`No room matches the code “${code}”.`} />;
+    return <Notice title="방을 찾을 수 없습니다" body={`“${code}” 코드에 해당하는 방이 없습니다.`} />;
   }
 
   return (
@@ -32,10 +32,10 @@ export default async function RoomPage({ params }: { params: Promise<{ code: str
 function Notice({ title, body }: { title: string; body: string }) {
   return (
     <main className="landscape-notice game-bg flex h-dvh w-full flex-col items-center justify-center gap-4 px-6 text-center text-white">
-      <h1 className="font-heading text-2xl font-bold uppercase tracking-wide">{title}</h1>
+      <h1 className="font-display text-2xl font-bold uppercase tracking-wide">{title}</h1>
       <p className="max-w-md text-white/60">{body}</p>
       <Link href="/" className="btn-race px-6 py-3">
-        Back to garage
+        차고로 돌아가기
       </Link>
     </main>
   );

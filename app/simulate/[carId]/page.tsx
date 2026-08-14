@@ -16,14 +16,14 @@ export default async function SimulatePage({
   const { carId } = await params;
 
   return (
-    <main className="relative h-dvh w-full overflow-hidden bg-neutral-900">
+    <main className="relative h-dvh w-full overflow-hidden bg-[#17110b]">
       <SimulatorClient carId={carId} />
 
       <Link
         href="/"
         className="sim-exit absolute left-4 top-4 z-30 rounded-md bg-black/45 px-3 py-1.5 font-mono text-xs text-white backdrop-blur transition hover:bg-black/65"
       >
-        ← back
+        ← 뒤로
       </Link>
     </main>
   );

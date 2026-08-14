@@ -1,18 +1,21 @@
 @import "tailwindcss";
 
+/* Desert-Jericho palette: night dunes, sunlit sandstone, mud-brick clay. */
 :root {
-  --background: #07070c;
-  --foreground: #f4f7fa;
-  --accent: #22d3ee; /* electric cyan */
-  --accent-2: #f59e0b; /* energy amber */
+  --background: #17110b; /* dune at night */
+  --foreground: #f6ead6; /* moonlit sand */
+  --accent: #e0a84e; /* sunlit sandstone */
+  --accent-2: #c05f34; /* mud-brick clay */
+  --sand: #d9c193;
+  --wall: #8a6440;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-sans-kr);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-rajdhani);
+  --font-heading: var(--font-heading-kr);
 }
 
 html,
@@ -23,36 +26,63 @@ body {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans-kr), "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   overscroll-behavior: none; /* no rubber-band scroll on mobile */
   -webkit-tap-highlight-color: transparent;
 }
 
+/* No scrollbars anywhere — this is a game, not a document. Everything still scrolls; the
+   bar itself is what goes, so panels don't get a grey stripe down the side and nothing
+   reflows when content grows past its box. */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* ---- Game chrome ---------------------------------------------------------- */
 
-/* Layered radial glows + vignette for a showroom backdrop. */
+/* Low sun over the dunes, warm haze at the horizon. */
 .game-bg {
   background:
-    radial-gradient(1100px 620px at 50% -12%, rgba(34, 211, 238, 0.18), transparent 60%),
-    radial-gradient(820px 520px at 108% 118%, rgba(245, 158, 11, 0.12), transparent 60%),
-    linear-gradient(180deg, #0b1120 0%, #07070c 58%, #050507 100%);
+    radial-gradient(1100px 620px at 50% -12%, rgba(224, 168, 78, 0.22), transparent 60%),
+    radial-gradient(820px 520px at 108% 118%, rgba(192, 95, 52, 0.16), transparent 60%),
+    linear-gradient(180deg, #3b2a19 0%, #221812 55%, #120d09 100%);
 }
 
+/* Two tiers, because the display face is a black weight: at label size its Hangul closes up
+   into blobs. Only the big titles get it (.font-display); everything else that used to be a
+   "heading" is the body face at a mid weight. Both pin weight/style so the Tailwind
+   font-bold/italic utilities can't reintroduce faux styling — unlayered rules outrank
+   @layer utilities. */
 .font-heading {
-  font-family: var(--font-heading), var(--font-geist-sans), sans-serif;
+  font-family: var(--font-sans-kr), sans-serif;
+  font-weight: 500;
+  font-style: normal;
 }
 
-/* Chromed neon title. */
+.font-display {
+  font-family: var(--font-heading), var(--font-sans-kr), sans-serif;
+  font-weight: 400;
+  font-style: normal;
+}
+
+/* Sandstone title, lit from above. */
 .neon-title {
-  font-family: var(--font-heading), var(--font-geist-sans), sans-serif;
-  font-weight: 700;
-  font-style: italic;
+  font-family: var(--font-heading), var(--font-sans-kr), sans-serif;
+  font-weight: 400;
+  font-style: normal;
   letter-spacing: 0.01em;
-  background: linear-gradient(180deg, #ffffff 0%, #bdeefb 55%, #22d3ee 100%);
+  background: linear-gradient(180deg, #fff6e3 0%, #e9c98d 52%, #d08a3c 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  filter: drop-shadow(0 2px 14px rgba(34, 211, 238, 0.35));
+  filter: drop-shadow(0 2px 14px rgba(224, 168, 78, 0.4));
 }
 
 /* Primary CTA — glowing gradient race button. */
@@ -62,18 +92,17 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  font-family: var(--font-heading), sans-serif;
-  font-weight: 700;
-  font-style: italic;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: #04131b;
+  /* Body face, not the display black: these buttons run from 10px chips to the main CTA. */
+  font-family: var(--font-sans-kr), sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #2a1608;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  background: linear-gradient(180deg, #7df0ff 0%, #22d3ee 55%, #06b6d4 100%);
+  border: 1px solid rgba(255, 240, 214, 0.35);
+  background: linear-gradient(180deg, #f6d79a 0%, #e0a84e 55%, #c07f2c 100%);
   box-shadow:
-    0 10px 34px rgba(34, 211, 238, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    0 10px 34px rgba(224, 168, 78, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55);
   transition:
     filter 0.12s ease,
     box-shadow 0.12s ease,
@@ -82,7 +111,7 @@ body {
 .btn-race:hover {
   filter: brightness(1.08);
   box-shadow:
-    0 12px 44px rgba(34, 211, 238, 0.6),
+    0 12px 44px rgba(224, 168, 78, 0.58),
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 .btn-race:active {
@@ -100,14 +129,13 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  font-family: var(--font-heading), sans-serif;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #e8f1f5;
+  font-family: var(--font-sans-kr), sans-serif;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: #f2e3c8;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(246, 234, 214, 0.16);
+  background: rgba(246, 234, 214, 0.07);
   backdrop-filter: blur(8px);
   transition:
     background 0.12s ease,
@@ -115,8 +143,8 @@ body {
     transform 0.1s ease;
 }
 .btn-ghost:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(34, 211, 238, 0.5);
+  background: rgba(246, 234, 214, 0.13);
+  border-color: rgba(224, 168, 78, 0.55);
 }
 .btn-ghost:active {
   transform: translateY(1px);
@@ -126,13 +154,13 @@ body {
   opacity: 0.45;
 }
 
-/* Frosted dark panel. */
+/* Frosted panel, cut from warm stone. */
 .game-panel {
-  background: linear-gradient(180deg, rgba(19, 24, 38, 0.86), rgba(9, 12, 20, 0.86));
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, rgba(48, 35, 23, 0.86), rgba(22, 16, 11, 0.88));
+  border: 1px solid rgba(246, 234, 214, 0.12);
   box-shadow:
     0 24px 70px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    inset 0 1px 0 rgba(246, 234, 214, 0.07);
   backdrop-filter: blur(14px);
 }
 
@@ -216,8 +244,8 @@ body {
   outline: none;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
-.map-input:focus { border-color: rgba(34, 211, 238, 0.7); background: rgba(0, 0, 0, 0.35); }
-.map-input::placeholder { color: rgba(255, 255, 255, 0.22); }
+.map-input:focus { border-color: rgba(224, 168, 78, 0.7); background: rgba(0, 0, 0, 0.35); }
+.map-input::placeholder { color: rgba(246, 234, 214, 0.25); }
 .map-color {
   width: 100%;
   height: 2.6rem;
@@ -252,6 +280,22 @@ body {
 }
 
 @media (pointer: coarse) {
+  /* Fingers need ~44px of target. Buttons across the app were landing at 32-36px, and the
+     sliders at 16px, which is unhittable while holding a phone in two hands. */
+  .btn-race,
+  .btn-ghost {
+    min-height: 44px;
+  }
+
+  input[type="range"] {
+    height: 44px;
+  }
+
+  .touch-target {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   .sim-help {
     display: none;
   }
@@ -384,11 +428,19 @@ body {
 
   .garage-empty .btn-race {
     grid-column: 3;
-    grid-row: 1 / 3;
-    align-self: center;
+    grid-row: 1;
+    align-self: end;
     margin: 0;
     padding: 0.7rem 1rem;
     font-size: 0.8rem;
+  }
+
+  /* Sits under the draw button in the third column rather than auto-placing into the copy. */
+  .garage-empty-practice {
+    grid-column: 3;
+    grid-row: 2;
+    align-self: start;
+    padding: 0.45rem 1rem;
   }
 
   /* Drawing and name dialogs */
@@ -487,15 +539,45 @@ body {
     margin-top: 0.75rem;
   }
 
-  /* Lobby */
+  /* Lobby — one screen, no page scroll: the start button has to stay reachable without
+     scrolling past three panels on a 375px-tall viewport. Each column scrolls on its own. */
+  .lobby-page {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
   .lobby-shell {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: 100dvh;
     max-width: 75rem;
-    gap: 0.75rem;
+    gap: 0.6rem;
     padding:
       max(0.65rem, env(safe-area-inset-top))
       max(0.75rem, env(safe-area-inset-right))
       max(0.75rem, env(safe-area-inset-bottom))
       max(0.75rem, env(safe-area-inset-left));
+  }
+
+  .lobby-main-grid {
+    min-height: 0;
+  }
+
+  .lobby-side {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .lobby-roster,
+  .lobby-settings {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  /* The QR is a second way to do what the copy button already does; on a short screen the
+     space is worth more than the convenience. */
+  .lobby-qr {
+    display: none;
   }
 
   .lobby-header h1 {
@@ -507,8 +589,35 @@ body {
   }
 
   .lobby-main-grid {
-    grid-template-columns: minmax(15rem, 1fr) minmax(15rem, 0.9fr);
-    gap: 0.75rem;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: 0.6rem;
+  }
+
+  /* Everything shrinks a notch: at 375px of height the default type scale spends the whole
+     screen on padding. */
+  .lobby-header h1 {
+    font-size: 1.35rem;
+  }
+
+  .lobby-roster,
+  .lobby-settings {
+    padding: 0.7rem;
+  }
+
+  .lobby-setup {
+    padding: 0.55rem 0.7rem;
+    gap: 0.5rem;
+  }
+
+  /* The route drawing is the first thing that can afford to give up space here. */
+  .lobby-settings-body {
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: 0.6rem;
+  }
+
+  .lobby-start {
+    padding: 0.55rem 2rem;
+    font-size: 0.95rem;
   }
 
   .lobby-side {
@@ -705,13 +814,21 @@ body {
     display: none;
   }
 
+  /* One row only, so the practice link gets its own column instead of stacking. */
   .garage-empty {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
     grid-template-rows: auto;
   }
 
   .garage-empty > span:first-child,
-  .garage-empty .btn-race {
+  .garage-empty .btn-race,
+  .garage-empty-practice {
     grid-row: 1;
+  }
+
+  .garage-empty-practice {
+    grid-column: 4;
+    align-self: center;
   }
 
   .draw-workspace {
