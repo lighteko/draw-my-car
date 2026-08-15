@@ -1,7 +1,7 @@
 /**
  * tracks.ts — track geometry, shared by the server-side map store and the scene.
  *
- * Every track is an admin-uploaded map (see lib/maps.ts); there is no built-in catalogue.
+ * Tracks can be bundled official maps or admin-uploaded maps (see lib/maps.ts).
  * Tracks use a "gate racing" model: an ordered loop of gates on open ground that players
  * drive through in sequence, N laps. No walled circuit needed — this keeps geometry cheap
  * and lap detection robust (planar proximity to the next expected gate). Gate rotations and
@@ -45,6 +45,8 @@ export interface AuthoredPose {
 }
 
 export interface TrackDef extends TrackMeta {
+  /** Bundled maps are always available and cannot be deleted from the map lab. */
+  official?: boolean;
   groundColor: string;
   /** Gate + accent color. */
   accent: string;

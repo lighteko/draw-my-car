@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAdminAuthorized } from "@/lib/adminAuth";
-import { deleteMap, getMap, updateMapSettings } from "@/lib/maps";
+import { deleteMap, getMap, isOfficialMap, updateMapSettings } from "@/lib/maps";
 import { DEFAULT_VEHICLE_TUNING, type VehicleTuning } from "@/lib/vehicleTuning";
 import { DEFAULT_GRAPHICS_SETTINGS, type GraphicsSettings } from "@/lib/graphicsSettings";
 import type { AuthoredPose, Vec3 } from "@/lib/tracks";
@@ -168,6 +168,9 @@ export async function DELETE(
     return NextResponse.json({ error: "관리자 로그인이 필요합니다" }, { status: 401 });
   }
   const { id } = await ctx.params;
+  if (isOfficialMap(id)) {
+    return NextResponse.json({ error: "공식 맵은 삭제할 수 없습니다" }, { status: 403 });
+  }
   if (!deleteMap(id)) return NextResponse.json({ error: "맵을 찾을 수 없습니다" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

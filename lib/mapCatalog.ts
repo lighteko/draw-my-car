@@ -6,9 +6,9 @@ import type { TrackDef } from "@/lib/tracks";
 /**
  * mapCatalog.ts — client-side access to the admin map library.
  *
- * The only tracks that exist are the ones an admin uploaded in the map lab, so every
- * lookup goes through /api/maps instead of a bundled catalogue. lib/maps.ts (the store)
- * is server-only — it touches the filesystem — which is why these helpers live here.
+ * Official and admin-uploaded tracks are exposed through one API. lib/maps.ts merges the
+ * bundled catalogue with locally persisted authoring data. It stays server-only because it
+ * touches the filesystem, which is why these client helpers live here.
  */
 
 /** Settings value meaning "pick a map when the race starts". */

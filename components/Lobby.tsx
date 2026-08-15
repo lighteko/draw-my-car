@@ -85,7 +85,7 @@ export function Lobby({
     };
   }, [ready]);
 
-  // The map library — every racable track is one an admin uploaded in the map lab.
+  // The map library contains bundled official tracks plus admin-uploaded tracks.
   useEffect(() => {
     let cancelled = false;
     fetchMaps()
@@ -386,7 +386,7 @@ export function Lobby({
                         onClick={() => applySettings({ ...settings, trackId: m.id })}
                         title={m.blurb}
                       >
-                        {m.name}
+                        {m.name}{m.official ? " · 공식" : ""}
                       </Chip>
                     ))}
                   </div>
