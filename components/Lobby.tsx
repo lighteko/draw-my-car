@@ -8,23 +8,28 @@ import type { ReactNode } from "react";
 import { usePlayer } from "@/lib/identity";
 import { hasBrowserSupabase } from "@/lib/supabase-browser";
 import { enterFullscreen, isTouchDevice, useAutoFullscreen } from "@/lib/fullscreen";
-import { joinRoom, type RoomHandle } from "@/lib/realtime";
+import {
+  joinRoom,
+  type RoomConnectionStatus,
+  type RoomHandle,
+} from "@/lib/realtime";
 import { saveRaceHandoff } from "@/lib/raceHandoff";
-import { apiGet, apiPatch } from "@/lib/api";
+import { apiGet, apiPatch, apiPost } from "@/lib/api";
 import type { TrackDef } from "@/lib/tracks";
-import { fetchMaps, pickRandomMap, RANDOM_TRACK_ID } from "@/lib/mapCatalog";
+import { fetchMaps, RANDOM_TRACK_ID } from "@/lib/mapCatalog";
 import { estimateRaceSeconds, lapDistance } from "@/lib/tracks";
 import { RoutePreview } from "./RoutePreview";
 import {
   LAP_OPTIONS,
   MAX_PLAYER_OPTIONS,
-  type GridSlot,
   type PresenceMeta,
   type RaceSettings,
   type Role,
   type RoomMessage,
 } from "@/lib/roomTypes";
 import type { Car } from "@/lib/cars";
+import type { PublicRoom } from "@/lib/rooms";
+import { collapsePresence, createPresenceSessionId } from "@/lib/presence";
 
 const ACTIVE_CAR_KEY = "dmc_active_car";
 
@@ -35,19 +40,19 @@ const ACTIVE_CAR_KEY = "dmc_active_car";
  * in the race phase (the button is present but inert here).
  */
 export function Lobby({
-  code,
-  ownerDeviceId,
-  initialSettings,
+  initialRoom,
+  autoJoin,
 }: {
-  code: string;
-  ownerDeviceId: string;
-  initialSettings: RaceSettings;
+  initialRoom: PublicRoom;
+  autoJoin: boolean;
 }) {
+  const code = initialRoom.code;
+  const ownerDeviceId = initialRoom.ownerDeviceId;
   const { deviceId, username, ready } = usePlayer();
   const router = useRouter();
   useAutoFullscreen();
 
-  const [settings, setSettings] = useState<RaceSettings>(initialSettings);
+  const [room, setRoom] = useState<PublicRoom>(initialRoom);
   const [members, setMembers] = useState<PresenceMeta[]>([]);
   const [cars, setCars] = useState<Car[]>([]);
   const [maps, setMaps] = useState<TrackDef[]>([]);
@@ -58,11 +63,37 @@ export function Lobby({
   const [joinUrl, setJoinUrl] = useState("");
   const [copied, setCopied] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
+  const [connection, setConnection] = useState<RoomConnectionStatus>("connecting");
+  const [presenceSynced, setPresenceSynced] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleRef = useRef<RoomHandle | null>(null);
-  const isOwner = deviceId !== "" && deviceId === ownerDeviceId;
+  const activeSessionIdsRef = useRef<Set<string>>(new Set());
+  const settingsMutationRef = useRef(false);
+  const startingRef = useRef(false);
+  const resettingRef = useRef(false);
+  const roomRef = useRef(room);
+  const settings = room.settings;
+  const sessionId = useMemo(
+    () => (deviceId ? createPresenceSessionId(deviceId) : ""),
+    [deviceId],
+  );
+  const collapsedMembers = useMemo(() => collapsePresence(members), [members]);
+  const canonicalSelf = collapsedMembers.find((member) => member.deviceId === deviceId);
+  const isPrimarySession = canonicalSelf?.sessionId === sessionId;
+  const hasOtherPrimarySession =
+    presenceSynced && canonicalSelf !== undefined && !isPrimarySession;
+  const ownsRoom = deviceId !== "" && deviceId === ownerDeviceId;
+  const isOwner = ownsRoom && isPrimarySession;
   const supported = hasBrowserSupabase();
   const carName = useMemo(() => cars.find((c) => c.id === carId)?.name ?? null, [cars, carId]);
+
+  useEffect(() => {
+    roomRef.current = room;
+  }, [room]);
 
   // Load this device's cars; default the pick to the active car.
   useEffect(() => {
@@ -116,45 +147,98 @@ export function Lobby({
   }, [code]);
 
   const myMeta: PresenceMeta = useMemo(
-    () => ({ deviceId, username, role, carId, carName, ready: isReady }),
-    [deviceId, username, role, carId, carName, isReady],
+    () => ({
+      deviceId,
+      sessionId,
+      username,
+      role,
+      carId,
+      carName,
+      ready: isReady,
+    }),
+    [deviceId, sessionId, username, role, carId, carName, isReady],
   );
 
   // Render and validate this device from local state immediately instead of
   // waiting for its presence update to make a round trip through Realtime.
   const visibleMembers = useMemo(() => {
-    if (!deviceId) return members;
+    if (!deviceId) return collapsedMembers;
     let includesSelf = false;
-    const next = members.map((member) => {
+    const next = collapsedMembers.map((member) => {
       if (member.deviceId !== deviceId) return member;
       includesSelf = true;
-      return myMeta;
+      return member.sessionId === sessionId ? myMeta : member;
     });
     if (!includesSelf && ready) next.push(myMeta);
     return next;
-  }, [deviceId, members, myMeta, ready]);
+  }, [collapsedMembers, deviceId, myMeta, ready, sessionId]);
+
+  const enterCanonicalRace = useCallback(
+    (nextRoom: PublicRoom) => {
+      if (nextRoom.status !== "racing" || !nextRoom.race) return false;
+      saveRaceHandoff(code, {
+        raceId: nextRoom.race.raceId,
+        trackId: nextRoom.race.trackId,
+        laps: nextRoom.race.laps,
+        grid: nextRoom.race.grid,
+        ownerDeviceId: nextRoom.ownerDeviceId,
+        startAt: nextRoom.race.startAt,
+      });
+      router.push(`/r/${code}/race`);
+      return true;
+    },
+    [code, router],
+  );
+
+  const refreshRoom = useCallback(async () => {
+    const { room: canonical } = await apiGet<{ room: PublicRoom; serverNow: number }>(
+      `/api/rooms/${code}`,
+    );
+    setRoom(canonical);
+    if (autoJoin) enterCanonicalRace(canonical);
+    return canonical;
+  }, [autoJoin, code, enterCanonicalRace]);
+
+  // A missed Realtime invalidation must not strand a player in the lobby. The database
+  // snapshot is canonical, so a lightweight poll also repairs reconnects and cold loads.
+  useEffect(() => {
+    if (autoJoin && enterCanonicalRace(initialRoom)) return;
+    const timer = window.setInterval(() => {
+      void refreshRoom().catch(() => {});
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [autoJoin, enterCanonicalRace, initialRoom, refreshRoom]);
 
   // Join the room channel once identity is ready (re-join only on identity/code change).
   useEffect(() => {
     if (!ready || !supported || !deviceId) return;
     const handle = joinRoom(
       code,
-      { deviceId, username, role, carId, carName, ready: isReady },
       {
-        // Presence owns membership. Preserve any newer player_state broadcast
-        // while reconciling who is still connected.
+        deviceId,
+        sessionId,
+        username,
+        role,
+        carId,
+        carName,
+        ready: isReady,
+      },
+      {
+        // Presence owns membership. Replacing the roster also drops stale state from a
+        // closed duplicate tab; the subsequent track/player_state carries the latest UI.
         onPresence: (incoming) => {
-          setMembers((current) => {
-            const known = new Map(current.map((member) => [member.deviceId, member]));
-            return incoming.map((member) => known.get(member.deviceId) ?? member);
-          });
+          activeSessionIdsRef.current = new Set(incoming.map((member) => member.sessionId));
+          setMembers(incoming);
+          setPresenceSynced(true);
         },
         onMessage: (msg: RoomMessage) => {
-          if (msg.kind === "settings") setSettings(msg.settings);
-          else if (msg.kind === "player_state") {
+          if (msg.kind === "room_changed") {
+            if (msg.version !== roomRef.current.version) void refreshRoom().catch(() => {});
+          } else if (msg.kind === "player_state") {
+            if (!activeSessionIdsRef.current.has(msg.member.sessionId)) return;
             setMembers((current) => {
               const index = current.findIndex(
-                (member) => member.deviceId === msg.member.deviceId,
+                (member) => member.sessionId === msg.member.sessionId,
               );
               if (index < 0) return [...current, msg.member];
               const next = [...current];
@@ -162,17 +246,10 @@ export function Lobby({
               return next;
             });
           }
-          else if (msg.kind === "start") {
-            // Persist the owner-assigned grid so the race page spawns everyone in
-            // their own slot instead of re-deriving slots from a partial presence sync.
-            saveRaceHandoff(code, {
-              trackId: msg.trackId,
-              laps: msg.laps,
-              grid: msg.grid,
-              ownerDeviceId: msg.ownerDeviceId,
-            });
-            router.push(`/r/${code}/race?track=${msg.trackId}&laps=${msg.laps}`);
-          }
+        },
+        onStatus: (status) => {
+          setConnection(status);
+          if (status !== "connected") setPresenceSynced(false);
         },
       },
     );
@@ -182,7 +259,7 @@ export function Lobby({
       handleRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, supported, deviceId, code]);
+  }, [ready, supported, deviceId, sessionId, code, refreshRoom]);
 
   // Push presence whenever my choices change.
   useEffect(() => {
@@ -195,12 +272,40 @@ export function Lobby({
   }, [role]);
 
   const applySettings = useCallback(
-    (next: RaceSettings) => {
-      setSettings(next);
-      handleRef.current?.send({ kind: "settings", settings: next });
-      apiPatch(`/api/rooms/${code}`, { settings: next }).catch(() => {});
+    async (patch: Partial<RaceSettings>) => {
+      if (
+        !isOwner ||
+        !presenceSynced ||
+        roomRef.current.status !== "lobby" ||
+        settingsMutationRef.current ||
+        startingRef.current ||
+        resettingRef.current
+      ) {
+        return;
+      }
+      settingsMutationRef.current = true;
+      setSavingSettings(true);
+      setErrorMessage(null);
+      const current = roomRef.current;
+      const next = { ...current.settings, ...patch };
+      try {
+        const { room: updated } = await apiPatch<{ room: PublicRoom }>(`/api/rooms/${code}`, {
+          settings: next,
+          expectedVersion: current.version,
+        });
+        setRoom(updated);
+        await handleRef.current
+          ?.send({ kind: "room_changed", version: updated.version })
+          .catch(() => {});
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "설정을 저장하지 못했습니다");
+        await refreshRoom().catch(() => null);
+      } finally {
+        settingsMutationRef.current = false;
+        setSavingSettings(false);
+      }
     },
-    [code],
+    [code, isOwner, presenceSynced, refreshRoom],
   );
 
   const pickCar = useCallback((id: string) => {
@@ -225,33 +330,90 @@ export function Lobby({
   const readyCount = players.filter((p) => p.ready).length;
   const selectedMap = maps.find((m) => m.id === settings.trackId) ?? null;
   // A player without a car races the placeholder rig, so only the ready check gates the start.
-  const canStart = players.length >= 1 && players.every((p) => p.ready) && maps.length > 0;
+  const withinPlayerLimit = players.length <= settings.maxPlayers;
+  const canStart =
+    isOwner &&
+    presenceSynced &&
+    room.status === "lobby" &&
+    connection === "connected" &&
+    !savingSettings &&
+    !starting &&
+    !resetting &&
+    players.length >= 1 &&
+    withinPlayerLimit &&
+    players.every((p) => p.ready) &&
+    maps.length > 0;
 
   const startRace = async () => {
-    // Resolve "random" here, once: the whole room races the id we broadcast.
-    const resolved =
-      settings.trackId === RANDOM_TRACK_ID || !maps.some((m) => m.id === settings.trackId)
-        ? pickRandomMap(maps)?.id
-        : settings.trackId;
-    if (!resolved) return;
-    const grid: GridSlot[] = players.map((p, i) => ({ deviceId: p.deviceId, slot: i }));
-    saveRaceHandoff(code, {
-      trackId: resolved,
-      laps: settings.laps,
-      grid,
-      ownerDeviceId,
-    });
-    // Await the broadcast so it flushes before we navigate away (which closes the channel).
-    await handleRef.current?.send({
-      kind: "start",
-      trackId: resolved,
-      laps: settings.laps,
-      grid,
-      ownerDeviceId,
-    });
-    apiPatch(`/api/rooms/${code}`, { status: "racing" }).catch(() => {});
-    if (isTouchDevice()) await enterFullscreen();
-    router.push(`/r/${code}/race?track=${resolved}&laps=${settings.laps}`);
+    if (
+      !canStart ||
+      startingRef.current ||
+      settingsMutationRef.current ||
+      resettingRef.current
+    ) {
+      return;
+    }
+    startingRef.current = true;
+    setStarting(true);
+    setErrorMessage(null);
+    try {
+      await handleRef.current?.waitUntilReady();
+      const current = roomRef.current;
+      const { room: updated } = await apiPost<{ room: PublicRoom; serverNow: number }>(
+        `/api/rooms/${code}/start`,
+        {
+          expectedVersion: current.version,
+          playerDeviceIds: players.map((player) => player.deviceId),
+        },
+      );
+      setRoom(updated);
+      await handleRef.current
+        ?.send({ kind: "room_changed", version: updated.version })
+        .catch(() => {});
+      if (isTouchDevice()) await enterFullscreen();
+      enterCanonicalRace(updated);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "레이스를 시작하지 못했습니다");
+      await refreshRoom().catch(() => null);
+      startingRef.current = false;
+      setStarting(false);
+    }
+  };
+
+  const resetRace = async () => {
+    const current = roomRef.current;
+    if (
+      !isOwner ||
+      !presenceSynced ||
+      connection !== "connected" ||
+      current.status === "lobby" ||
+      !current.race ||
+      resettingRef.current ||
+      startingRef.current ||
+      settingsMutationRef.current
+    ) {
+      return;
+    }
+    resettingRef.current = true;
+    setResetting(true);
+    setErrorMessage(null);
+    try {
+      const { room: updated } = await apiPost<{ room: PublicRoom; serverNow: number }>(
+        `/api/rooms/${code}/reset`,
+        { expectedVersion: current.version, raceId: current.race.raceId },
+      );
+      setRoom(updated);
+      setIsReady(false);
+      await handleRef.current
+        ?.send({ kind: "room_changed", version: updated.version })
+        .catch(() => {});
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "대기실을 다시 열지 못했습니다");
+      await refreshRoom().catch(() => null);
+    } finally {
+      resettingRef.current = false;
+      setResetting(false);
+    }
   };
 
   if (!supported) {
@@ -302,6 +464,23 @@ export function Lobby({
             </Link>
           </div>
         </header>
+
+        {(errorMessage ||
+          connection !== "connected" ||
+          !presenceSynced ||
+          !withinPlayerLimit ||
+          hasOtherPrimarySession) && (
+          <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-100">
+            {errorMessage ??
+              (hasOtherPrimarySession
+                ? "같은 기기의 다른 탭이 이 플레이어의 활성 세션입니다."
+                : !withinPlayerLimit
+                ? `참가자는 최대 ${settings.maxPlayers}명입니다. 초과 인원은 관전으로 전환해 주세요.`
+                : connection === "error"
+                  ? "실시간 연결에 실패했습니다. 다시 연결하는 중입니다."
+                  : "실시간 서버에 연결하는 중…")}
+          </div>
+        )}
 
         {qr && qrOpen && (
           <button
@@ -373,8 +552,15 @@ export function Lobby({
                   <div className="flex flex-wrap gap-1.5">
                     <Chip
                       active={settings.trackId === RANDOM_TRACK_ID}
-                      disabled={!isOwner}
-                      onClick={() => applySettings({ ...settings, trackId: RANDOM_TRACK_ID })}
+                      disabled={
+                        !isOwner ||
+                        !presenceSynced ||
+                        room.status !== "lobby" ||
+                        savingSettings ||
+                        starting ||
+                        resetting
+                      }
+                      onClick={() => void applySettings({ trackId: RANDOM_TRACK_ID })}
                     >
                       🎲 무작위
                     </Chip>
@@ -382,8 +568,15 @@ export function Lobby({
                       <Chip
                         key={m.id}
                         active={settings.trackId === m.id}
-                        disabled={!isOwner}
-                        onClick={() => applySettings({ ...settings, trackId: m.id })}
+                        disabled={
+                          !isOwner ||
+                          !presenceSynced ||
+                          room.status !== "lobby" ||
+                          savingSettings ||
+                          starting ||
+                          resetting
+                        }
+                        onClick={() => void applySettings({ trackId: m.id })}
                         title={m.blurb}
                       >
                         {m.name}{m.official ? " · 공식" : ""}
@@ -401,8 +594,15 @@ export function Lobby({
                       <Chip
                         key={n}
                         active={settings.laps === n}
-                        disabled={!isOwner}
-                        onClick={() => applySettings({ ...settings, laps: n })}
+                        disabled={
+                          !isOwner ||
+                          !presenceSynced ||
+                          room.status !== "lobby" ||
+                          savingSettings ||
+                          starting ||
+                          resetting
+                        }
+                        onClick={() => void applySettings({ laps: n })}
                       >
                         {n}
                       </Chip>
@@ -416,8 +616,15 @@ export function Lobby({
                       <Chip
                         key={n}
                         active={settings.maxPlayers === n}
-                        disabled={!isOwner}
-                        onClick={() => applySettings({ ...settings, maxPlayers: n })}
+                        disabled={
+                          !isOwner ||
+                          !presenceSynced ||
+                          room.status !== "lobby" ||
+                          savingSettings ||
+                          starting ||
+                          resetting
+                        }
+                        onClick={() => void applySettings({ maxPlayers: n })}
                       >
                         {n}
                       </Chip>
@@ -434,7 +641,11 @@ export function Lobby({
         <div className="lobby-footer flex flex-wrap items-center gap-3">
         {/* Your setup — a bar rather than a column, so the two information panels above it
             get the full width on a landscape phone. */}
-        <section className="lobby-setup game-panel flex min-w-0 flex-1 flex-wrap items-center gap-3 rounded-2xl p-4">
+        <section
+          className={`lobby-setup game-panel flex min-w-0 flex-1 flex-wrap items-center gap-3 rounded-2xl p-4 ${
+            hasOtherPrimarySession ? "pointer-events-none opacity-60" : ""
+          }`}
+        >
           <div className="flex shrink-0 gap-2">
               <RoleButton active={role === "player"} onClick={() => switchRole("player")}>
                 참가
@@ -495,24 +706,54 @@ export function Lobby({
               </>
             )}
           </section>
-        {/* Start */}
-        {isOwner && (
-          <button
-            type="button"
-            onClick={startRace}
-            disabled={!canStart}
-            className="lobby-start btn-race shrink-0 whitespace-nowrap px-10 py-4 text-lg"
-          >
-            레이스 시작
-            {players.length > 0 && (
-              <span className="ml-2 font-mono text-sm opacity-70">
-                {readyCount}/{players.length}
-              </span>
+        {/* Start / durable race reset */}
+        {room.status !== "lobby" && room.race ? (
+          <>
+            <button
+              type="button"
+              onClick={() => enterCanonicalRace(room)}
+              className="btn-ghost shrink-0 whitespace-nowrap px-6 py-3 text-sm"
+            >
+              레이스 다시 참가
+            </button>
+            {isOwner ? (
+              <button
+                type="button"
+                onClick={() => void resetRace()}
+                disabled={resetting || connection !== "connected"}
+                className="lobby-start btn-race shrink-0 whitespace-nowrap px-8 py-3 text-base"
+              >
+                {resetting ? "대기실 여는 중…" : "새 레이스 준비"}
+              </button>
+            ) : (
+              <p className="shrink-0 text-sm text-[#d9c193]/50">
+                새 레이스는 방장이 대기실을 다시 연 뒤 시작할 수 있습니다.
+              </p>
             )}
-          </button>
-        )}
-        {!isOwner && (
-          <p className="shrink-0 text-sm text-[#d9c193]/50">방장이 시작하기를 기다리는 중…</p>
+          </>
+        ) : (
+          <>
+            {isOwner && (
+              <button
+                type="button"
+                onClick={startRace}
+                disabled={!canStart}
+                className="lobby-start btn-race shrink-0 whitespace-nowrap px-10 py-4 text-lg"
+              >
+                {starting ? "레이스 준비 중…" : "레이스 시작"}
+                {players.length > 0 && (
+                  <span className="ml-2 font-mono text-sm opacity-70">
+                    {readyCount}/{players.length}
+                  </span>
+                )}
+              </button>
+            )}
+            {!isOwner && (
+              <p className="shrink-0 text-sm text-[#d9c193]/50">
+                방장이 시작하기를 기다리는 중…
+              </p>
+            )}
+          </>
         )}
         </div>
 

@@ -15,6 +15,15 @@ import { getServiceClient, hasSupabase } from "@/lib/supabase";
 export type JobStatus = "pending" | "processing" | "review" | "ready" | "failed";
 export type JobStage = "multiview" | "review" | "model";
 
+// The rooms module uses revision-keyed rows in the existing jobs table as an internal
+// append-only event store. Those predictable ids must never be readable or mutable through
+// the public generation-job API (notably the currently unsigned provider webhook).
+const INTERNAL_JOB_ID_PREFIXES = ["room-state:"] as const;
+
+function isInternalJobId(jobId: string): boolean {
+  return INTERNAL_JOB_ID_PREFIXES.some((prefix) => jobId.startsWith(prefix));
+}
+
 export interface StoredView {
   key: string;
   url: string;
@@ -192,9 +201,11 @@ export async function createJob(init: Partial<Job> = {}): Promise<Job> {
 }
 
 export async function getJob(jobId: string): Promise<Job | undefined> {
+  if (isInternalJobId(jobId)) return undefined;
   return hasSupabase() ? sbGet(jobId) : localGet(jobId);
 }
 
 export async function updateJob(jobId: string, patch: Partial<Job>): Promise<Job | undefined> {
+  if (isInternalJobId(jobId)) return undefined;
   return hasSupabase() ? sbUpdate(jobId, patch) : localUpdate(jobId, patch);
 }

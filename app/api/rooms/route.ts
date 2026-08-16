@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hasSupabase } from "@/lib/supabase";
-import { createRoom } from "@/lib/rooms";
+import { createRoom, publicRoom } from "@/lib/rooms";
 import { upsertPlayer } from "@/lib/players";
+import { setOwnerCookie } from "@/lib/roomOwner";
 
 /** POST /api/rooms — create a room owned by the requesting device. */
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -11,6 +12,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "multiplayer requires Supabase" }, { status: 503 });
   }
   await upsertPlayer(deviceId);
-  const room = await createRoom(deviceId);
-  return NextResponse.json({ room }, { status: 201 });
+  const { room, ownerToken } = await createRoom(deviceId);
+  const response = NextResponse.json({ room: publicRoom(room) }, { status: 201 });
+  setOwnerCookie(response, room.code, ownerToken);
+  return response;
 }

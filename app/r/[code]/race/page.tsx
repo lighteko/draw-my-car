@@ -1,22 +1,29 @@
 "use client";
 
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { TrackDef } from "@/lib/tracks";
 import { resolveSharedTrack } from "@/lib/mapCatalog";
 import { apiGet } from "@/lib/api";
 import { usePlayer } from "@/lib/identity";
 import { joinRoom, type RoomHandle } from "@/lib/realtime";
-import { loadRaceHandoff, saveRaceHandoff } from "@/lib/raceHandoff";
+import { saveRaceHandoff } from "@/lib/raceHandoff";
+import {
+  gridMembership,
+  isProgressUpdateAllowed,
+  isRoomMessageForRace,
+  progressScore,
+} from "@/lib/roomRules";
+import { collapsePresence, createPresenceSessionId } from "@/lib/presence";
 import { pushSnapshot, type Snapshot } from "@/components/RemoteVehicle";
 import { RaceSceneClient } from "@/components/RaceSceneClient";
 import type { RemoteRacer } from "@/components/RaceScene";
 import type { Car } from "@/lib/cars";
+import type { PublicRoom } from "@/lib/rooms";
 import type {
   GridSlot,
   PresenceMeta,
   Quat,
-  RaceSettings,
   RoomMessage,
   Standing,
   Vec3n,
@@ -24,16 +31,9 @@ import type {
 
 const ACTIVE_CAR_KEY = "dmc_active_car";
 
-/** Lead between the "go" broadcast and the shared start, so every client sees the 3-2-1. */
-const GO_LEAD_MS = 3500;
-/** Owner: stop waiting for missing racers after this long and start with whoever arrived. */
-const GRID_WAIT_MS = 8000;
-/** Everyone: if no "go" ever arrives (owner gone), fall back to a local start. */
-const NO_GO_FALLBACK_MS = 12000;
-
 interface RaceConfig {
-  /** null when the room's map is gone and the library has nothing to fall back to. */
   track: TrackDef | null;
+  raceId: string;
   laps: number;
   glb: string | null;
   ownerDeviceId: string;
@@ -50,29 +50,15 @@ interface PlayerProgress {
   totalMs: number | null;
 }
 
-/**
- * Spawn slots come from the owner-assigned grid (unique by construction). Anyone who
- * wasn't in the grid (direct URL join) gets a deterministic trailing slot.
- */
-function slotMap(grid: GridSlot[], playerIds: string[]): Map<string, number> {
-  const map = new Map<string, number>(grid.map((g) => [g.deviceId, g.slot]));
-  playerIds
-    .filter((id) => !map.has(id))
-    .sort()
-    .forEach((id, i) => map.set(id, grid.length + i));
-  return map;
-}
-
 function computeStandings(map: Map<string, PlayerProgress>, gateCount: number): Standing[] {
-  const gc = gateCount || 1;
-  const entries: Standing[] = [...map.entries()].map(([deviceId, p]) => ({
+  const entries: Standing[] = [...map.entries()].map(([deviceId, progress]) => ({
     deviceId,
-    username: p.username,
-    carName: p.carName,
-    lap: p.lap,
-    progress: p.lap * gc + ((p.nextGate - 1 + gc) % gc),
-    finished: p.finished,
-    totalMs: p.totalMs,
+    username: progress.username,
+    carName: progress.carName,
+    lap: progress.lap,
+    progress: progressScore(progress, gateCount),
+    finished: progress.finished,
+    totalMs: progress.totalMs,
   }));
   entries.sort((a, b) => {
     if (a.finished && b.finished) return (a.totalMs ?? 0) - (b.totalMs ?? 0);
@@ -81,6 +67,24 @@ function computeStandings(map: Map<string, PlayerProgress>, gateCount: number): 
     return b.progress - a.progress;
   });
   return entries;
+}
+
+function isValidStandingSnapshot(
+  entries: readonly Standing[],
+  admittedIds: ReadonlySet<string>,
+  gateCount: number,
+  laps: number,
+): boolean {
+  const maxProgress = laps * Math.max(gateCount, 1);
+  return entries.every(
+    (entry) =>
+      admittedIds.has(entry.deviceId) &&
+      entry.lap >= 0 &&
+      entry.lap <= laps &&
+      entry.progress >= 0 &&
+      entry.progress <= maxProgress &&
+      (!entry.finished || (entry.lap === laps && entry.totalMs !== null)),
+  );
 }
 
 export default function RoomRacePage() {
@@ -99,14 +103,11 @@ export default function RoomRacePage() {
 
 function RoomRace() {
   const params = useParams<{ code: string }>();
-  const search = useSearchParams();
   const router = useRouter();
   const { deviceId, username, ready } = usePlayer();
 
-  const trackParam = search.get("track");
-  const lapsParam = search.get("laps");
-
   const [config, setConfig] = useState<RaceConfig | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [members, setMembers] = useState<PresenceMeta[]>([]);
   const [remotes, setRemotes] = useState<RemoteRacer[]>([]);
   const [standings, setStandings] = useState<Standing[]>([]);
@@ -117,274 +118,333 @@ function RoomRace() {
   const remoteBuffers = useRef<Map<string, Snapshot[]>>(new Map());
   const glbCache = useRef<Map<string, string | null>>(new Map());
   const progressMap = useRef<Map<string, PlayerProgress>>(new Map());
-  const ownerRef = useRef("");
-  const gateCountRef = useRef(0);
-  const gridRef = useRef<GridSlot[] | null>(null);
-  const goStartAtRef = useRef<number | null>(null);
+  const localProgressRef = useRef({
+    lap: 0,
+    nextGate: 1,
+    finished: false,
+    totalMs: null as number | null,
+  });
+  const gridRef = useRef<GridSlot[]>([]);
+  const primarySessionRef = useRef(false);
+  const sessionId = useMemo(
+    () => (deviceId ? createPresenceSessionId(deviceId) : ""),
+    [deviceId],
+  );
 
-  // Resolve track/laps/car/owner/grid once identity is ready. The lobby handoff is the
-  // preferred source (it carries the owner-assigned grid); URL and the room API fill the
-  // gaps for cold loads without one.
+  // The server snapshot is the only race source. sessionStorage merely mirrors it for the
+  // navigation handoff; a cold load and a reload always recover the same grid and clock.
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
-    (async () => {
-      const handoff = loadRaceHandoff(params.code);
-      let trackId = handoff?.trackId ?? trackParam;
-      let laps = handoff?.laps ?? (Number(lapsParam) || 0);
-      let ownerDeviceId = handoff?.ownerDeviceId ?? "";
-      if (!trackId || !laps || !ownerDeviceId) {
-        try {
-          const { room } = await apiGet<{
-            room: { settings: RaceSettings; ownerDeviceId: string };
-          }>(`/api/rooms/${params.code}`);
-          if (!ownerDeviceId) ownerDeviceId = room.ownerDeviceId;
-          if (!trackId) trackId = room.settings.trackId;
-          if (!laps) laps = room.settings.laps;
-        } catch {
-          if (!laps) laps = 1;
+    void (async () => {
+      try {
+        const requestStartedAt = Date.now();
+        const { room, serverNow } = await apiGet<{ room: PublicRoom; serverNow: number }>(
+          `/api/rooms/${params.code}`,
+        );
+        const requestEndedAt = Date.now();
+        if (room.status !== "racing" || !room.race) {
+          throw new Error("진행 중인 레이스가 없습니다.");
+        }
+
+        const track = await resolveSharedTrack(room.race.trackId);
+        const carId = window.localStorage.getItem(ACTIVE_CAR_KEY);
+        let glb: string | null = null;
+        if (carId) {
+          try {
+            const { car } = await apiGet<{ car: Car }>(`/api/cars/${carId}`);
+            glb = car.glbUrl;
+          } catch {
+            /* placeholder */
+          }
+        }
+        if (cancelled) return;
+
+        const race = room.race;
+        const clockOffset = serverNow - (requestStartedAt + requestEndedAt) / 2;
+        const localStartAt = race.startAt - clockOffset;
+        const admitted = gridMembership(race, deviceId) !== null;
+        const spectator = window.localStorage.getItem("dmc_role") === "spectator" || !admitted;
+        saveRaceHandoff(params.code, {
+          raceId: race.raceId,
+          trackId: race.trackId,
+          laps: race.laps,
+          grid: race.grid,
+          ownerDeviceId: room.ownerDeviceId,
+          startAt: race.startAt,
+        });
+        gridRef.current = race.grid;
+        setGrid(race.grid);
+        setStartAt(localStartAt);
+        const nextConfig: RaceConfig = {
+          track,
+          raceId: race.raceId,
+          laps: race.laps,
+          glb,
+          ownerDeviceId: room.ownerDeviceId,
+          gateCount: track?.gates.length ?? 0,
+          spectator,
+        };
+        setConfig(nextConfig);
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : "레이스 상태를 불러오지 못했습니다.");
         }
       }
-      // Everyone resolves the same way: the id the owner broadcast, or — if that map is
-      // gone — the newest map, so a fallback still lands the whole room on one track.
-      const track = await resolveSharedTrack(trackId ?? "");
-
-      const carId = window.localStorage.getItem(ACTIVE_CAR_KEY);
-      let glb: string | null = null;
-      if (carId) {
-        try {
-          const { car } = await apiGet<{ car: Car }>(`/api/cars/${carId}`);
-          glb = car.glbUrl;
-        } catch {
-          /* placeholder */
-        }
-      }
-
-      if (cancelled) return;
-      if (handoff?.grid?.length) {
-        gridRef.current = handoff.grid;
-        setGrid(handoff.grid);
-      }
-      if (handoff?.startAt) {
-        // A reload mid-race rejoins on the shared clock instead of waiting for "go".
-        goStartAtRef.current = handoff.startAt;
-        setStartAt(handoff.startAt);
-      }
-      const gateCount = track?.gates.length ?? 0;
-      const spectator = window.localStorage.getItem("dmc_role") === "spectator";
-      ownerRef.current = ownerDeviceId;
-      gateCountRef.current = gateCount;
-      setConfig({ track, laps, glb, ownerDeviceId, gateCount, spectator });
     })();
     return () => {
       cancelled = true;
     };
-  }, [ready, params.code, trackParam, lapsParam]);
+  }, [deviceId, params.code, ready]);
 
-  // Join the room channel and run the start protocol: the owner waits for the grid to
-  // assemble (bounded by GRID_WAIT_MS), then broadcasts "go" with a shared wall-clock
-  // startAt; everyone else holds at the grid until it arrives.
   useEffect(() => {
     if (!config || !deviceId) return;
-    const isOwner = deviceId === ownerRef.current;
+    const isOwner = deviceId === config.ownerDeviceId;
+    const admittedIds = new Set(gridRef.current.map((entry) => entry.deviceId));
 
-    const persistHandoff = (at: number) => {
-      saveRaceHandoff(params.code, {
-        trackId: config.track?.id ?? "",
-        laps: config.laps,
-        grid: gridRef.current ?? [],
-        ownerDeviceId: config.ownerDeviceId,
-        startAt: at,
-      });
+    const verifyCanonicalRace = async () => {
+      const { room } = await apiGet<{ room: PublicRoom }>(`/api/rooms/${params.code}`);
+      if (room.status !== "racing" || room.race?.raceId !== config.raceId) {
+        router.push(`/r/${params.code}?stay=1`);
+      }
     };
 
-    const applyGrid = (g: GridSlot[]) => {
-      if (gridRef.current && JSON.stringify(gridRef.current) === JSON.stringify(g)) return;
-      gridRef.current = g;
-      setGrid(g);
+    const broadcastStandings = () => {
+      if (!isOwner || !primarySessionRef.current) return;
+      const next = computeStandings(progressMap.current, config.gateCount);
+      setStandings(next);
+      void handleRef.current
+        ?.send({
+          kind: "standings",
+          raceId: config.raceId,
+          senderDeviceId: deviceId,
+          entries: next,
+        })
+        .catch(() => {});
     };
 
-    // Owner: broadcast the shared start. Idempotent — repeat calls re-send the same
-    // startAt, so stragglers and reloads converge on one clock.
-    const issueGo = () => {
-      const g = gridRef.current;
-      if (!isOwner || !g) return;
-      const at = goStartAtRef.current ?? Date.now() + GO_LEAD_MS;
-      goStartAtRef.current = at;
-      setStartAt(at);
-      persistHandoff(at);
-      void handleRef.current?.send({ kind: "go", grid: g, startAt: at });
-    };
-
-    const bumpOwner = (id: string, patch: Partial<PlayerProgress>) => {
-      if (deviceId !== ownerRef.current) return;
-      const cur =
+    const bumpOwner = (
+      id: string,
+      patch: { lap?: number; nextGate?: number; finished?: boolean; totalMs?: number },
+    ) => {
+      if (!isOwner || !primarySessionRef.current || !admittedIds.has(id)) return;
+      const current =
         progressMap.current.get(id) ??
         ({
-          username: id.slice(0, 4),
+          username: id === deviceId ? username : id.slice(0, 4),
           carName: null,
           lap: 0,
           nextGate: 1,
           finished: false,
           totalMs: null,
-        } as PlayerProgress);
-      progressMap.current.set(id, { ...cur, ...patch });
-      const next = computeStandings(progressMap.current, gateCountRef.current);
-      setStandings(next);
-      handleRef.current?.send({ kind: "standings", entries: next });
+        } satisfies PlayerProgress);
+
+      if (patch.lap !== undefined || patch.nextGate !== undefined) {
+        const lap = patch.lap ?? current.lap;
+        const nextGate = patch.nextGate ?? current.nextGate;
+        if (!isProgressUpdateAllowed(current, { lap, nextGate }, config.gateCount, config.laps)) {
+          return;
+        }
+      }
+      if (patch.finished) {
+        const targetLap = patch.lap ?? current.lap;
+        if (
+          targetLap < config.laps ||
+          patch.totalMs === undefined ||
+          !Number.isFinite(patch.totalMs) ||
+          patch.totalMs < 0
+        ) {
+          return;
+        }
+      }
+      progressMap.current.set(id, { ...current, ...patch });
+      broadcastStandings();
     };
 
     const onPresence = (incoming: PresenceMeta[]) => {
-      setMembers(incoming);
-
-      if (isOwner) {
-        // Seed usernames/car names for the leaderboard.
-        incoming
-          .filter((m) => m.role === "player")
-          .forEach((m) => {
-            const cur = progressMap.current.get(m.deviceId);
-            progressMap.current.set(m.deviceId, {
-              username: m.username,
-              carName: m.carName,
-              lap: cur?.lap ?? 0,
-              nextGate: cur?.nextGate ?? 1,
-              finished: cur?.finished ?? false,
-              totalMs: cur?.totalMs ?? null,
-            });
+      const collapsed = collapsePresence(incoming);
+      primarySessionRef.current =
+        collapsed.find((member) => member.deviceId === deviceId)?.sessionId === sessionId;
+      setMembers(collapsed);
+      if (!isOwner || !primarySessionRef.current) return;
+      collapsed
+        .filter((member) => member.role === "player" && admittedIds.has(member.deviceId))
+        .forEach((member) => {
+          const current = progressMap.current.get(member.deviceId);
+          progressMap.current.set(member.deviceId, {
+            username: member.username,
+            carName: member.carName,
+            lap: current?.lap ?? 0,
+            nextGate: current?.nextGate ?? 1,
+            finished: current?.finished ?? false,
+            totalMs: current?.totalMs ?? null,
           });
-
-        if (goStartAtRef.current != null) {
-          issueGo(); // re-broadcast so whoever just arrived gets the shared clock
-        } else if (gridRef.current) {
-          const present = new Set(
-            incoming.filter((m) => m.role === "player").map((m) => m.deviceId),
-          );
-          if (gridRef.current.every((s) => present.has(s.deviceId))) issueGo();
-        }
-      }
+        });
+      broadcastStandings();
+      void handleRef.current
+        ?.send({
+          kind: "progress_request",
+          raceId: config.raceId,
+          senderDeviceId: deviceId,
+        })
+        .catch(() => {});
     };
 
-    const onMessage = (msg: RoomMessage) => {
-      if (msg.kind === "transform") {
-        if (msg.deviceId === deviceId) return;
-        let buf = remoteBuffers.current.get(msg.deviceId);
-        if (!buf) {
-          buf = [];
-          remoteBuffers.current.set(msg.deviceId, buf);
+    const onMessage = (message: RoomMessage) => {
+      if (message.kind === "room_changed") {
+        void verifyCanonicalRace().catch(() => {});
+        return;
+      }
+      if (message.kind === "player_state") return;
+      if (!isRoomMessageForRace(message, config.raceId)) return;
+
+      if (message.kind === "transform") {
+        if (
+          message.deviceId === deviceId ||
+          message.senderDeviceId !== message.deviceId ||
+          !admittedIds.has(message.deviceId)
+        ) {
+          return;
         }
-        pushSnapshot(buf, msg.p, msg.q);
-      } else if (msg.kind === "go") {
-        applyGrid(msg.grid);
-        if (goStartAtRef.current !== msg.startAt) {
-          goStartAtRef.current = msg.startAt;
-          setStartAt(msg.startAt);
-          persistHandoff(msg.startAt);
+        let buffer = remoteBuffers.current.get(message.deviceId);
+        if (!buffer) {
+          buffer = [];
+          remoteBuffers.current.set(message.deviceId, buffer);
         }
-      } else if (msg.kind === "standings") {
-        setStandings(msg.entries);
-      } else if (msg.kind === "progress") {
-        bumpOwner(msg.deviceId, { lap: msg.lap, nextGate: msg.nextGate });
-      } else if (msg.kind === "finished") {
-        bumpOwner(msg.deviceId, { finished: true, totalMs: msg.totalMs });
+        pushSnapshot(buffer, message.p, message.q);
+      } else if (message.kind === "standings") {
+        if (
+          message.senderDeviceId === config.ownerDeviceId &&
+          isValidStandingSnapshot(message.entries, admittedIds, config.gateCount, config.laps)
+        ) {
+          setStandings(message.entries);
+        }
+      } else if (message.kind === "progress") {
+        if (message.senderDeviceId === message.deviceId) {
+          bumpOwner(message.deviceId, { lap: message.lap, nextGate: message.nextGate });
+        }
+      } else if (message.kind === "finished") {
+        if (message.senderDeviceId === message.deviceId) {
+          bumpOwner(message.deviceId, {
+            lap: message.lap,
+            nextGate: message.nextGate,
+            finished: true,
+            totalMs: message.totalMs,
+          });
+        }
+      } else if (message.kind === "progress_request") {
+        if (
+          message.senderDeviceId !== config.ownerDeviceId ||
+          config.spectator ||
+          !primarySessionRef.current
+        ) {
+          return;
+        }
+        const local = localProgressRef.current;
+        void handleRef.current
+          ?.send({
+            kind: "progress_state",
+            raceId: config.raceId,
+            senderDeviceId: deviceId,
+            deviceId,
+            ...local,
+          })
+          .catch(() => {});
+      } else if (message.kind === "progress_state") {
+        if (message.senderDeviceId !== message.deviceId) return;
+        bumpOwner(message.deviceId, {
+          lap: message.lap,
+          nextGate: message.nextGate,
+          ...(message.finished && message.totalMs !== null
+            ? { finished: true, totalMs: message.totalMs }
+            : {}),
+        });
       }
     };
 
     const carId = window.localStorage.getItem(ACTIVE_CAR_KEY);
     const meta: PresenceMeta = {
       deviceId,
+      sessionId,
       username,
       role: config.spectator ? "spectator" : "player",
       carId,
       carName: null,
       ready: true,
     };
-    handleRef.current = joinRoom(params.code, meta, { onPresence, onMessage });
-
-    // Owner: grace window for racers still navigating, then start with whoever is here.
-    const goTimer = isOwner ? window.setTimeout(issueGo, GRID_WAIT_MS) : undefined;
-    // Everyone: no "go" at all (owner gone / never reachable) → race locally.
-    const fallbackTimer = window.setTimeout(() => {
-      if (goStartAtRef.current != null) return;
-      if (!gridRef.current) {
-        gridRef.current = [{ deviceId, slot: 0 }];
-        setGrid(gridRef.current);
-      }
-      const at = Date.now() + GO_LEAD_MS;
-      goStartAtRef.current = at;
-      setStartAt(at);
-    }, NO_GO_FALLBACK_MS);
-
+    const handle = joinRoom(params.code, meta, {
+      onPresence,
+      onMessage,
+      onStatus: (status) => {
+        if (status === "connected") void verifyCanonicalRace().catch(() => {});
+      },
+    });
+    handleRef.current = handle;
     return () => {
-      window.clearTimeout(goTimer);
-      window.clearTimeout(fallbackTimer);
-      handleRef.current?.leave();
+      primarySessionRef.current = false;
+      handle.leave();
       handleRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config, deviceId]);
+  }, [config, deviceId, params.code, router, sessionId, username]);
 
-  // Ghost cars for everyone else, spawn slots resolved from the authoritative grid.
+  // Render only server-admitted racers. A late joiner absent from the persisted grid is a
+  // spectator and cannot manufacture a trailing slot.
   useEffect(() => {
-    if (!deviceId) return;
+    if (!deviceId || !grid) return;
     let cancelled = false;
-    const players = members.filter((m) => m.role === "player");
-    const slots = slotMap(grid ?? [], players.map((m) => m.deviceId));
-    const others = players.filter((m) => m.deviceId !== deviceId);
+    const admittedIds = new Set(grid.map((entry) => entry.deviceId));
+    const byDevice = new Map(members.map((member) => [member.deviceId, member]));
+    const others = grid
+      .filter((entry) => entry.deviceId !== deviceId)
+      .map((entry) => byDevice.get(entry.deviceId))
+      .filter((member): member is PresenceMeta => Boolean(member));
     void (async () => {
       await Promise.all(
-        others.map(async (m) => {
-          if (m.carId && !glbCache.current.has(m.carId)) {
+        others.map(async (member) => {
+          if (member.carId && !glbCache.current.has(member.carId)) {
             try {
-              const { car } = await apiGet<{ car: Car }>(`/api/cars/${m.carId}`);
-              glbCache.current.set(m.carId, car.glbUrl);
+              const { car } = await apiGet<{ car: Car }>(`/api/cars/${member.carId}`);
+              glbCache.current.set(member.carId, car.glbUrl);
             } catch {
-              glbCache.current.set(m.carId, null);
+              glbCache.current.set(member.carId, null);
             }
           }
         }),
       );
       if (cancelled) return;
       setRemotes(
-        others.map((m) => ({
-          deviceId: m.deviceId,
-          glbUrl: m.carId ? glbCache.current.get(m.carId) ?? null : null,
-          spawnIndex: slots.get(m.deviceId) ?? 0,
-        })),
+        others
+          .filter((member) => admittedIds.has(member.deviceId))
+          .map((member) => ({
+            deviceId: member.deviceId,
+            glbUrl: member.carId ? glbCache.current.get(member.carId) ?? null : null,
+            spawnIndex: gridMembership(grid, member.deviceId)?.slot ?? 0,
+          })),
       );
     })();
     return () => {
       cancelled = true;
     };
-  }, [members, grid, deviceId]);
+  }, [deviceId, grid, members]);
 
-  // Own spawn slot — null until the grid is known, so the scene never mounts at slot 0
-  // only to teleport later.
-  const spawnIndex = useMemo(() => {
-    if (!grid || !deviceId) return null;
-    const playerIds = new Set(
-      members.filter((m) => m.role === "player").map((m) => m.deviceId),
-    );
-    playerIds.add(deviceId);
-    return slotMap(grid, [...playerIds]).get(deviceId) ?? 0;
-  }, [grid, members, deviceId]);
-
-  // Callbacks handed to the scene (fresh each render; used via up-to-date closures).
+  const spawnIndex = useMemo(
+    () => (grid && deviceId ? gridMembership(grid, deviceId)?.slot ?? null : null),
+    [deviceId, grid],
+  );
   const isOwner = deviceId === config?.ownerDeviceId;
 
-  const reportProgress = (lap: number, nextGate: number) => {
-    if (isOwner) applyOwnerProgress(deviceId, { lap, nextGate });
-    else handleRef.current?.send({ kind: "progress", deviceId, lap, nextGate });
-  };
-  const reportFinished = (totalMs: number) => {
-    if (isOwner) applyOwnerProgress(deviceId, { finished: true, totalMs });
-    else handleRef.current?.send({ kind: "finished", deviceId, totalMs });
-  };
-  const sendTransform = (p: Vec3n, q: Quat) => {
-    handleRef.current?.send({ kind: "transform", deviceId, p, q });
-  };
-
-  function applyOwnerProgress(id: string, patch: Partial<PlayerProgress>) {
-    const cur =
+  const applyOwnerProgress = (
+    id: string,
+    patch: Partial<Pick<PlayerProgress, "lap" | "nextGate" | "finished" | "totalMs">>,
+  ) => {
+    if (
+      !config ||
+      !primarySessionRef.current ||
+      !gridRef.current.some((entry) => entry.deviceId === id)
+    ) {
+      return;
+    }
+    const current =
       progressMap.current.get(id) ??
       ({
         username: id === deviceId ? username : id.slice(0, 4),
@@ -393,14 +453,93 @@ function RoomRace() {
         nextGate: 1,
         finished: false,
         totalMs: null,
-      } as PlayerProgress);
-    progressMap.current.set(id, { ...cur, ...patch });
-    const next = computeStandings(progressMap.current, gateCountRef.current);
+      } satisfies PlayerProgress);
+    progressMap.current.set(id, { ...current, ...patch });
+    const next = computeStandings(progressMap.current, config.gateCount);
     setStandings(next);
-    handleRef.current?.send({ kind: "standings", entries: next });
+    void handleRef.current
+      ?.send({
+        kind: "standings",
+        raceId: config.raceId,
+        senderDeviceId: deviceId,
+        entries: next,
+      })
+      .catch(() => {});
+  };
+
+  const reportProgress = (lap: number, nextGate: number) => {
+    if (!config || !primarySessionRef.current) return;
+    localProgressRef.current = { ...localProgressRef.current, lap, nextGate };
+    if (isOwner) applyOwnerProgress(deviceId, { lap, nextGate });
+    else {
+      void handleRef.current
+        ?.send({
+          kind: "progress",
+          raceId: config.raceId,
+          senderDeviceId: deviceId,
+          deviceId,
+          lap,
+          nextGate,
+        })
+        .catch(() => {});
+    }
+  };
+  const reportFinished = (totalMs: number) => {
+    if (!config || !primarySessionRef.current) return;
+    const completed = { ...localProgressRef.current, finished: true, totalMs };
+    localProgressRef.current = completed;
+    if (isOwner) {
+      applyOwnerProgress(deviceId, {
+        lap: completed.lap,
+        nextGate: completed.nextGate,
+        finished: true,
+        totalMs,
+      });
+    }
+    else {
+      void handleRef.current
+        ?.send({
+          kind: "finished",
+          raceId: config.raceId,
+          senderDeviceId: deviceId,
+          deviceId,
+          lap: completed.lap,
+          nextGate: completed.nextGate,
+          totalMs,
+        })
+        .catch(() => {});
+    }
+  };
+  const sendTransform = (position: Vec3n, rotation: Quat) => {
+    if (!config || config.spectator || !primarySessionRef.current) return;
+    void handleRef.current
+      ?.send({
+        kind: "transform",
+        raceId: config.raceId,
+        senderDeviceId: deviceId,
+        deviceId,
+        p: position,
+        q: rotation,
+      })
+      .catch(() => {});
+  };
+
+  if (loadError) {
+    return (
+      <div className="flex h-dvh w-full flex-col items-center justify-center gap-4 bg-[#17110b] px-6 text-center font-mono text-sm text-[#d9c193]/70">
+        <p>{loadError}</p>
+        <button
+          type="button"
+          onClick={() => router.push(`/r/${params.code}?stay=1`)}
+          className="text-amber-400 underline"
+        >
+          대기실로
+        </button>
+      </div>
+    );
   }
 
-  if (!config || (!config.spectator && spawnIndex == null)) {
+  if (!config || startAt == null || (!config.spectator && spawnIndex == null)) {
     return (
       <div className="flex h-dvh w-full items-center justify-center bg-[#17110b] font-mono text-sm text-[#d9c193]/70">
         출발선에 정렬하는 중…
@@ -414,7 +553,7 @@ function RoomRace() {
         <p>이 방의 맵을 더 이상 사용할 수 없습니다.</p>
         <button
           type="button"
-          onClick={() => router.push(`/r/${params.code}`)}
+          onClick={() => router.push(`/r/${params.code}?stay=1`)}
           className="text-amber-400 underline"
         >
           대기실로
@@ -438,7 +577,7 @@ function RoomRace() {
       onTransform={sendTransform}
       onProgress={reportProgress}
       onFinished={reportFinished}
-      onExit={() => router.push(`/r/${params.code}`)}
+      onExit={() => router.push(`/r/${params.code}?stay=1`)}
       exitLabel="대기실로"
     />
   );

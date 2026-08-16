@@ -1,14 +1,21 @@
 import Link from "next/link";
 import { hasSupabase } from "@/lib/supabase";
-import { getRoom } from "@/lib/rooms";
+import { getRoom, publicRoom } from "@/lib/rooms";
 import { Lobby } from "@/components/Lobby";
 
 /**
  * /r/[code] — the room lobby. Server component: resolves the room (for a share-link cold
  * load) and hands its owner + settings to the client <Lobby/>, which drives Realtime.
  */
-export default async function RoomPage({ params }: { params: Promise<{ code: string }> }) {
+export default async function RoomPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ code: string }>;
+  searchParams: Promise<{ stay?: string }>;
+}) {
   const { code } = await params;
+  const { stay } = await searchParams;
 
   if (!hasSupabase()) {
     return (
@@ -24,9 +31,7 @@ export default async function RoomPage({ params }: { params: Promise<{ code: str
     return <Notice title="방을 찾을 수 없습니다" body={`“${code}” 코드에 해당하는 방이 없습니다.`} />;
   }
 
-  return (
-    <Lobby code={code} ownerDeviceId={room.ownerDeviceId} initialSettings={room.settings} />
-  );
+  return <Lobby initialRoom={publicRoom(room)} autoJoin={stay !== "1"} />;
 }
 
 function Notice({ title, body }: { title: string; body: string }) {

@@ -10,13 +10,14 @@ import type { GridSlot } from "./roomTypes";
  */
 
 export interface RaceHandoff {
+  raceId: string;
   trackId: string;
   laps: number;
   /** Owner-assigned spawn slots, one per player, unique by construction. */
   grid: GridSlot[];
   ownerDeviceId: string;
-  /** Shared wall-clock start; written once "go" is seen so a reload resumes in sync. */
-  startAt?: number;
+  /** Server-issued shared wall-clock start. */
+  startAt: number;
 }
 
 const key = (code: string) => `dmc_race:${code}`;
@@ -34,7 +35,15 @@ export function loadRaceHandoff(code: string): RaceHandoff | null {
     const raw = window.sessionStorage.getItem(key(code));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as RaceHandoff;
-    if (!parsed || typeof parsed.trackId !== "string" || !Array.isArray(parsed.grid)) return null;
+    if (
+      !parsed ||
+      typeof parsed.raceId !== "string" ||
+      typeof parsed.trackId !== "string" ||
+      !Array.isArray(parsed.grid) ||
+      !Number.isFinite(parsed.startAt)
+    ) {
+      return null;
+    }
     return parsed;
   } catch {
     return null;

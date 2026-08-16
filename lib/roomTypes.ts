@@ -32,6 +32,8 @@ export type Role = "player" | "spectator";
 /** One participant, carried in Realtime presence. */
 export interface PresenceMeta {
   deviceId: string;
+  /** Per-tab identity so overlapping reconnects do not preserve stale ready state. */
+  sessionId: string;
   username: string;
   role: Role;
   carId: string | null;
@@ -43,6 +45,16 @@ export interface PresenceMeta {
 export interface GridSlot {
   deviceId: string;
   slot: number;
+}
+
+/** Immutable server-persisted configuration for one running race. */
+export interface RaceSnapshot {
+  raceId: string;
+  trackId: string;
+  laps: number;
+  grid: GridSlot[];
+  startAt: number;
+  createdAt: number;
 }
 
 export type Vec3n = [number, number, number];
@@ -61,17 +73,45 @@ export interface Standing {
 }
 
 export type RoomMessage =
-  | { kind: "settings"; settings: RaceSettings }
+  | { kind: "room_changed"; version: string }
   | { kind: "player_state"; member: PresenceMeta }
-  // Owner resolved the race config; everyone persists the handoff and navigates.
-  | { kind: "start"; trackId: string; laps: number; grid: GridSlot[]; ownerDeviceId: string }
-  // Owner-issued on the race channel once the grid has formed: the shared wall-clock
-  // instant racing begins. Re-broadcast on presence changes so stragglers catch up.
-  | { kind: "go"; grid: GridSlot[]; startAt: number }
   // High-frequency car pose (kept out of React state; buffered + interpolated).
-  | { kind: "transform"; deviceId: string; p: Vec3n; q: Quat }
+  | {
+      kind: "transform";
+      raceId: string;
+      senderDeviceId: string;
+      deviceId: string;
+      p: Vec3n;
+      q: Quat;
+    }
   // A player's own lap progress, reported to the owner for ranking.
-  | { kind: "progress"; deviceId: string; lap: number; nextGate: number }
-  | { kind: "finished"; deviceId: string; totalMs: number }
+  | {
+      kind: "progress";
+      raceId: string;
+      senderDeviceId: string;
+      deviceId: string;
+      lap: number;
+      nextGate: number;
+    }
+  | {
+      kind: "finished";
+      raceId: string;
+      senderDeviceId: string;
+      deviceId: string;
+      lap: number;
+      nextGate: number;
+      totalMs: number;
+    }
+  | { kind: "progress_request"; raceId: string; senderDeviceId: string }
+  | {
+      kind: "progress_state";
+      raceId: string;
+      senderDeviceId: string;
+      deviceId: string;
+      lap: number;
+      nextGate: number;
+      finished: boolean;
+      totalMs: number | null;
+    }
   // Owner-authoritative leaderboard, rebroadcast to everyone.
-  | { kind: "standings"; entries: Standing[] };
+  | { kind: "standings"; raceId: string; senderDeviceId: string; entries: Standing[] };
