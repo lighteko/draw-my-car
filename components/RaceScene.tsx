@@ -34,7 +34,7 @@ import {
 } from "@/lib/audio";
 import type { Quat, Standing, Vec3n } from "@/lib/roomTypes";
 import { VehicleRig, type RespawnPoint } from "./VehicleRig";
-import { RaceHud, type RaceResult } from "./RaceHud";
+import { RaceHud, type LapDelta, type RaceResult } from "./RaceHud";
 import { RemoteVehicle, type Snapshot } from "./RemoteVehicle";
 import { TouchControls } from "./TouchControls";
 import { Minimap } from "./Minimap";
@@ -130,6 +130,9 @@ export function RaceScene({
   spectator = false,
   exitLabel,
   adminMode = false,
+  isOwner = false,
+  onRematch,
+  rematching = false,
 }: {
   /** The admin-authored map to race on, resolved by the page from /api/maps. */
   track: TrackDef;
@@ -161,6 +164,10 @@ export function RaceScene({
   exitLabel?: string;
   /** Enables live vehicle controls for custom-map test drives. */
   adminMode?: boolean;
+  /** Only the room owner sees the results-card rematch button. */
+  isOwner?: boolean;
+  onRematch?: () => void;
+  rematching?: boolean;
 }) {
   useAutoFullscreen();
   const freeDrive = track.gates.length === 0;
@@ -256,6 +263,17 @@ export function RaceScene({
   }, []);
   useEffect(() => () => window.clearTimeout(resetNoticeTimer.current), []);
   const [raceStartPerf, setRaceStartPerf] = useState<number | null>(null);
+
+  // Best-lap delta: shown briefly after each lap completes, then cleared. The first lap has
+  // nothing to compare against, so it never sets this.
+  const [lapDelta, setLapDelta] = useState<LapDelta | null>(null);
+  const lapDeltaTimer = useRef(0);
+  const showLapDelta = useCallback((ms: number) => {
+    setLapDelta({ ms });
+    window.clearTimeout(lapDeltaTimer.current);
+    lapDeltaTimer.current = window.setTimeout(() => setLapDelta(null), 2200);
+  }, []);
+  useEffect(() => () => window.clearTimeout(lapDeltaTimer.current), []);
 
   const progress = useRef<Progress>({ nextGate: 1, lap: 0, lapStart: 0, lapTimes: [] });
   const emptyBuffers = useRef<Map<string, Snapshot[]>>(new Map());
@@ -403,8 +421,14 @@ export function RaceScene({
     const total = track.gates.length;
     if (p.nextGate === 0) {
       const now = performance.now();
+      const lapTime = now - p.lapStart;
+      // Best-lap delta, judged against every prior lap — computed before this lap joins
+      // lapTimes, so a first lap (nothing to compare against) never shows one.
+      if (p.lapTimes.length > 0) {
+        showLapDelta(lapTime - Math.min(...p.lapTimes));
+      }
       p.lap += 1;
-      p.lapTimes.push(now - p.lapStart);
+      p.lapTimes.push(lapTime);
       p.lapStart = now;
       p.nextGate = 1 % total;
       setLap(p.lap);
@@ -540,6 +564,7 @@ export function RaceScene({
         startAt={raceStartPerf}
         running={phase === "racing"}
         lapTimes={lapTimes}
+        lapDelta={lapDelta}
         result={result}
         standings={standings}
         selfDeviceId={selfDeviceId}
@@ -551,6 +576,9 @@ export function RaceScene({
         onToggleMuted={toggleMuted}
         exitLabel={exitLabel}
         onExit={onExit}
+        isOwner={isOwner}
+        onRematch={onRematch}
+        rematching={rematching}
       />
       {!spectator && <SpeedMeter bodyRef={chassisRef} />}
       {!spectator && <TouchControls />}
@@ -584,7 +612,12 @@ export function RaceScene({
         />
       )}
       {!freeDrive && (
-        <Minimap track={track} selfBody={chassisRef} remoteBuffers={remoteBuffers ?? emptyBuffers} />
+        <Minimap
+          track={track}
+          selfBody={chassisRef}
+          remoteBuffers={remoteBuffers ?? emptyBuffers}
+          nextGateIndex={nextGate}
+        />
       )}
     </div>
   );

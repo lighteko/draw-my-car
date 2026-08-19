@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { TrackDef } from "@/lib/tracks";
 import { resolveSharedTrack } from "@/lib/mapCatalog";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { usePlayer } from "@/lib/identity";
 import { joinRoom, type RoomHandle } from "@/lib/realtime";
 import { saveRaceHandoff } from "@/lib/raceHandoff";
@@ -113,6 +113,7 @@ function RoomRace() {
   const [standings, setStandings] = useState<Standing[]>([]);
   const [grid, setGrid] = useState<GridSlot[] | null>(null);
   const [startAt, setStartAt] = useState<number | null>(null);
+  const [rematching, setRematching] = useState(false);
 
   const handleRef = useRef<RoomHandle | null>(null);
   const remoteBuffers = useRef<Map<string, Snapshot[]>>(new Map());
@@ -126,6 +127,7 @@ function RoomRace() {
   });
   const gridRef = useRef<GridSlot[]>([]);
   const primarySessionRef = useRef(false);
+  const rematchingRef = useRef(false);
   const sessionId = useMemo(
     () => (deviceId ? createPresenceSessionId(deviceId) : ""),
     [deviceId],
@@ -524,6 +526,49 @@ function RoomRace() {
       .catch(() => {});
   };
 
+  // Rematch: the owner returns the room to lobby status so everyone races again without
+  // walking back through it first. The 409 "room changed" case (someone else already reset,
+  // or the version moved) is handled by re-fetching the room and retrying once; if that still
+  // doesn't line up, fall back to sending everyone to the lobby rather than leaving a dead
+  // button on screen.
+  const rematch = async () => {
+    if (!config || !isOwner || rematchingRef.current) return;
+    rematchingRef.current = true;
+    setRematching(true);
+    try {
+      const { room } = await apiGet<{ room: PublicRoom; serverNow: number }>(
+        `/api/rooms/${params.code}`,
+      );
+      if (room.status !== "racing" || !room.race) {
+        router.push(`/r/${params.code}?stay=1`);
+        return;
+      }
+      try {
+        await apiPost(`/api/rooms/${params.code}/reset`, {
+          expectedVersion: room.version,
+          raceId: room.race.raceId,
+        });
+      } catch {
+        // Retry once against the current version, then give up and go to the lobby.
+        const { room: retryRoom } = await apiGet<{ room: PublicRoom; serverNow: number }>(
+          `/api/rooms/${params.code}`,
+        );
+        if (retryRoom.status === "racing" && retryRoom.race) {
+          await apiPost(`/api/rooms/${params.code}/reset`, {
+            expectedVersion: retryRoom.version,
+            raceId: retryRoom.race.raceId,
+          });
+        }
+      }
+      router.push(`/r/${params.code}?stay=1`);
+    } catch {
+      router.push(`/r/${params.code}?stay=1`);
+    } finally {
+      rematchingRef.current = false;
+      setRematching(false);
+    }
+  };
+
   if (loadError) {
     return (
       <div className="flex h-dvh w-full flex-col items-center justify-center gap-4 bg-[#17110b] px-6 text-center font-mono text-sm text-[#d9c193]/70">
@@ -579,6 +624,9 @@ function RoomRace() {
       onFinished={reportFinished}
       onExit={() => router.push(`/r/${params.code}?stay=1`)}
       exitLabel="대기실로"
+      isOwner={isOwner}
+      onRematch={() => void rematch()}
+      rematching={rematching}
     />
   );
 }

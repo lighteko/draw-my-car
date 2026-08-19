@@ -13,6 +13,11 @@ export interface RaceResult {
   lapTimes: number[];
 }
 
+/** A completed lap compared against the player's best lap so far (null on the first lap). */
+export interface LapDelta {
+  ms: number;
+}
+
 type Phase = "waiting" | "countdown" | "racing" | "finished";
 
 export function formatMs(ms: number): string {
@@ -21,6 +26,12 @@ export function formatMs(ms: number): string {
   const s = Math.floor((total % 60000) / 1000);
   const cs = Math.floor((total % 1000) / 10);
   return `${m}:${s.toString().padStart(2, "0")}.${cs.toString().padStart(2, "0")}`;
+}
+
+/** Signed delta against the best lap, e.g. "-0.42" / "+1.20" — seconds, not the clock format. */
+function formatDelta(ms: number): string {
+  const sign = ms < 0 ? "-" : "+";
+  return `${sign}${(Math.abs(ms) / 1000).toFixed(2)}`;
 }
 
 export function RaceHud({
@@ -32,6 +43,7 @@ export function RaceHud({
   startAt,
   running,
   lapTimes,
+  lapDelta = null,
   result,
   standings = [],
   selfDeviceId,
@@ -43,6 +55,9 @@ export function RaceHud({
   onToggleMuted,
   exitLabel = "완료",
   onExit,
+  isOwner = false,
+  onRematch,
+  rematching = false,
 }: {
   phase: Phase;
   countdown: number;
@@ -53,6 +68,8 @@ export function RaceHud({
   startAt: number | null;
   running: boolean;
   lapTimes: number[];
+  /** Shown briefly after a lap completes; null on the first lap (nothing to compare against). */
+  lapDelta?: LapDelta | null;
   result: RaceResult | null;
   standings?: Standing[];
   selfDeviceId?: string;
@@ -67,6 +84,10 @@ export function RaceHud({
   onToggleMuted?: () => void;
   exitLabel?: string;
   onExit?: () => void;
+  /** Only the room owner may start a rematch from the results card. */
+  isOwner?: boolean;
+  onRematch?: () => void;
+  rematching?: boolean;
 }) {
   // Refresh the running clock (~12 fps is plenty for a timer readout). performance.now()
   // is read only inside the interval callback, never during render.
@@ -80,6 +101,7 @@ export function RaceHud({
   const elapsed =
     running && startAt != null && nowMs > 0 ? nowMs - startAt : result?.totalMs ?? 0;
   const lastLap = lapTimes.length ? lapTimes[lapTimes.length - 1] : null;
+  const bestLapMs = result && result.lapTimes.length ? Math.min(...result.lapTimes) : null;
   // Position is the one readout, alongside speed, that racing HUDs never leave out. It only
   // means anything with someone to be ahead of, so it stays hidden in a solo run.
   const rank =
@@ -135,6 +157,15 @@ export function RaceHud({
           {lastLap != null && (
             <div className="rounded-md bg-black/35 px-3 py-1 text-xs backdrop-blur">
               직전 {formatMs(lastLap)}
+            </div>
+          )}
+          {lapDelta != null && (
+            <div
+              className={`dmc-rise rounded-md bg-black/45 px-3 py-1 text-sm font-bold backdrop-blur ${
+                lapDelta.ms < 0 ? "text-emerald-400" : "text-amber-400"
+              }`}
+            >
+              {formatDelta(lapDelta.ms)}
             </div>
           )}
         </div>
@@ -228,13 +259,37 @@ export function RaceHud({
               {formatMs(result.totalMs)}
             </div>
             <ul className="race-results-laps mb-5 flex flex-col gap-1 font-mono text-sm">
-              {result.lapTimes.map((t, i) => (
-                <li key={i} className="flex justify-between text-neutral-300">
-                  <span>{i + 1}바퀴</span>
-                  <span>{formatMs(t)}</span>
-                </li>
-              ))}
+              {result.lapTimes.map((t, i) => {
+                const isBest = t === bestLapMs && result.lapTimes.length > 1;
+                return (
+                  <li
+                    key={i}
+                    className={`flex justify-between ${
+                      isBest ? "font-bold text-emerald-400" : "text-neutral-300"
+                    }`}
+                  >
+                    <span>
+                      {i + 1}바퀴{isBest ? " · 베스트" : ""}
+                    </span>
+                    <span>{formatMs(t)}</span>
+                  </li>
+                );
+              })}
             </ul>
+            {isOwner ? (
+              <button
+                type="button"
+                onClick={onRematch}
+                disabled={rematching}
+                className="mb-2 w-full rounded-lg bg-amber-600 px-4 py-2.5 font-semibold transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {rematching ? "재대결 준비 중…" : "재대결"}
+              </button>
+            ) : (
+              <p className="mb-2 text-center text-xs text-[#d9c193]/60">
+                방장이 재대결을 시작할 수 있습니다
+              </p>
+            )}
             <button
               type="button"
               onClick={onExit}
