@@ -307,24 +307,38 @@ export function stableStringify(value: unknown): string {
   return `{${body}}`;
 }
 
+/**
+ * A room runs two channels — reliable control and fire-and-forget telemetry — and they are
+ * delivered independently. Sequence numbers are therefore counted per lane, and the lane is
+ * signed, so a message cannot be lifted from one channel and replayed on the other.
+ */
+export type MessageLane = "control" | "telemetry";
+
 /** What the sender's private key actually signs: the body, plus who/where/when/which. */
 export function canonicalMessageString(
   roomCode: string,
   deviceId: string,
+  lane: MessageLane,
   seq: number,
   timestamp: number,
   message: unknown,
 ): string {
   return [
-    "dmc-room-msg.v1",
+    "dmc-room-msg.v2",
     normalizeRoomCode(roomCode),
     deviceId,
+    lane,
     String(seq),
     String(timestamp),
     stableStringify(message),
   ]
     .map((field) => `${field.length}:${field}`)
     .join("|");
+}
+
+/** Replay-guard key. Lanes advance their own sequences, so they must not share a slot. */
+export function replayKey(deviceId: string, lane: MessageLane): string {
+  return `${deviceId}:${lane}`;
 }
 
 export interface MessageSigner {
@@ -392,9 +406,10 @@ export async function verifyMessageSignature(
 }
 
 /**
- * Refuses a message this sender already sent, or one old enough to have been captured and
- * rebroadcast. Sequence numbers are per sender and only ever move forward, so a recording of
- * the channel is worthless the moment the real sender moves on.
+ * Refuses a message this sender already sent on this lane, or one old enough to have been
+ * captured and rebroadcast. Sequences only move forward within a lane, so a recording is
+ * worthless the moment the real sender moves on — while the other lane, which advances its
+ * own counter, is not starved by it.
  */
 export function createReplayGuard(): {
   accept(deviceId: string, seq: number, timestamp: number, now?: number): boolean;

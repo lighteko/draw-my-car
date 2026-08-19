@@ -12,6 +12,7 @@ import {
   MESSAGE_SIGNATURE_FIELD,
   MESSAGE_TIMESTAMP_FIELD,
   canonicalMessageString,
+  replayKey,
   createMessageSigner,
   createReplayGuard,
   credentialCacheKey,
@@ -21,6 +22,7 @@ import {
   splitCredential,
   verifyMessageSignature,
   withCredential,
+  type MessageLane,
   type MessageSigner,
   type RoomCredential,
 } from "./roomMessageAuth";
@@ -172,7 +174,7 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
    * can copy one. What settles it is the signature over this exact message, checked against
    * the public key the server certified for that device.
    */
-  const authenticate = async (payload: unknown): Promise<RoomMessage | null> => {
+  const authenticate = async (payload: unknown, lane: MessageLane): Promise<RoomMessage | null> => {
     const { message, credential } = splitCredential(payload);
     if (!credential) return null;
     if (!isCredentialConsistent(credential, message, code)) return null;
@@ -187,7 +189,7 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
     if (typeof signature !== "string" || typeof seq !== "number" || typeof timestamp !== "number") {
       return null;
     }
-    if (!replayGuard.accept(credential.deviceId, seq, timestamp)) return null;
+    if (!replayGuard.accept(replayKey(credential.deviceId, lane), seq, timestamp)) return null;
 
     let keyPromise = senderKeys.get(credential.publicKeyJwk);
     if (!keyPromise) {
@@ -199,6 +201,7 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
     const canonical = canonicalMessageString(
       code,
       credential.deviceId,
+      lane,
       seq,
       timestamp,
       parsed,
@@ -211,20 +214,20 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
    * order-sensitive and the owner's rules reject a rewind, which would silently drop a lap
    * if two messages from one sender raced each other through the crypto.
    */
-  const makeDispatcher = (handle: (msg: RoomMessage) => void) => {
+  const makeDispatcher = (lane: MessageLane, handle: (msg: RoomMessage) => void) => {
     let chain: Promise<void> = Promise.resolve();
     return (payload: unknown): void => {
       chain = chain
         .then(async () => {
-          const message = await authenticate(payload);
+          const message = await authenticate(payload, lane);
           if (message) handle(message);
         })
         .catch(() => {});
     };
   };
 
-  const dispatchControl = makeDispatcher((message) => handlers.onMessage(message));
-  const dispatchTelemetry = makeDispatcher((message) => {
+  const dispatchControl = makeDispatcher("control", (message) => handlers.onMessage(message));
+  const dispatchTelemetry = makeDispatcher("telemetry", (message) => {
     if (message.kind === "transform") handlers.onMessage(message);
   });
 
@@ -235,7 +238,10 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
   // mere presentation of a public certificate — is what proves a message came from us.
   let signer: MessageSigner | null = null;
   let signerPromise: Promise<MessageSigner | null> | null = null;
-  let outboundSeq = 0;
+  // One counter per lane. Sharing a counter across the two channels meant whichever message
+  // arrived first advanced the receiver's guard and the other lane's traffic was refused as a
+  // replay — during a race the 20-30 Hz transforms simply starved everything else out.
+  const outboundSeq: Record<MessageLane, number> = { control: 0, telemetry: 0 };
   const ensureSigner = async (): Promise<MessageSigner | null> => {
     if (signer) return signer;
     signerPromise ??= createMessageSigner();
@@ -248,13 +254,16 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
    * timestamp are inside the signed string, so a captured payload cannot be rebroadcast: the
    * receiver has already moved past that sequence.
    */
-  const signedPayload = async (msg: RoomMessage): Promise<Record<string, unknown>> => {
+  const signedPayload = async (
+    msg: RoomMessage,
+    lane: MessageLane,
+  ): Promise<Record<string, unknown>> => {
     const base = withCredential(msg, credential);
     const active = await ensureSigner();
     if (!active || !credential) return base;
-    const seq = ++outboundSeq;
+    const seq = ++outboundSeq[lane];
     const timestamp = Date.now();
-    const canonical = canonicalMessageString(code, credential.deviceId, seq, timestamp, msg);
+    const canonical = canonicalMessageString(code, credential.deviceId, lane, seq, timestamp, msg);
     return {
       ...base,
       [MESSAGE_SEQ_FIELD]: seq,
@@ -351,9 +360,9 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
       await channel.send({
         type: "broadcast",
         event: "msg",
-        payload: withCredential(
+        payload: await signedPayload(
           { kind: "player_state", member: snapshot } satisfies RoomMessage,
-          credential,
+          "control",
         ),
       });
     } finally {
@@ -410,14 +419,14 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
         await telemetryChannel.send({
           type: "broadcast",
           event: "msg",
-          payload: await signedPayload(msg),
+          payload: await signedPayload(msg, "telemetry"),
         });
         return;
       }
       const result = await channel.send({
         type: "broadcast",
         event: "msg",
-        payload: await signedPayload(msg),
+        payload: await signedPayload(msg, "control"),
       });
       if (result !== "ok") throw new Error(`Realtime broadcast ${result}`);
     },

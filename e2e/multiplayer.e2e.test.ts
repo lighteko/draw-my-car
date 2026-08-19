@@ -229,7 +229,7 @@ async function connectPlayer(code: string, deviceId: string): Promise<PlayerConn
     if (!signer || !credential) return base;
     const seq = seqOverride ?? ++outboundSeq;
     const timestamp = tsOverride ?? Date.now();
-    const canonical = canonicalMessageString(roomCode, credential.deviceId, seq, timestamp, msg);
+    const canonical = canonicalMessageString(roomCode, credential.deviceId, "control", seq, timestamp, msg);
     return {
       ...base,
       [MESSAGE_SEQ_FIELD]: seq,
@@ -539,7 +539,7 @@ describe.skipIf(!HAVE_ENV)("room message auth (real server + real Supabase)", ()
     const forgedMsg: RoomMessage = { kind: "room_changed", version: "forged" };
     const seq = 1;
     const timestamp = Date.now();
-    const canonical = canonicalMessageString(code, victim.credential!.deviceId, seq, timestamp, forgedMsg);
+    const canonical = canonicalMessageString(code, victim.credential!.deviceId, "control", seq, timestamp, forgedMsg);
     const forgedPayload = {
       ...forgedMsg,
       __cred: victim.credential, // genuine certificate for the victim
@@ -581,14 +581,14 @@ describe.skipIf(!HAVE_ENV)("room message auth (real server + real Supabase)", ()
     expect(key).not.toBeNull();
 
     // The original, unmodified message verifies fine against its own signature.
-    const canonicalOriginal = canonicalMessageString(code, sender.credential!.deviceId, seq, timestamp, original);
+    const canonicalOriginal = canonicalMessageString(code, sender.credential!.deviceId, "control", seq, timestamp, original);
     expect(await verifyMessageSignature(key!, canonicalOriginal, signature)).toBe(true);
 
     // A receiver re-derives the canonical string from the (possibly tampered) body it actually
     // received. Tamper with the body after signing, the way a compromised relay would, and the
     // re-derived canonical string no longer matches what was signed.
     const tamperedBody: RoomMessage = { kind: "room_changed", version: "v2-attacker-modified" };
-    const canonicalTampered = canonicalMessageString(code, sender.credential!.deviceId, seq, timestamp, tamperedBody);
+    const canonicalTampered = canonicalMessageString(code, sender.credential!.deviceId, "control", seq, timestamp, tamperedBody);
     expect(await verifyMessageSignature(key!, canonicalTampered, signature)).toBe(false);
   });
 

@@ -391,37 +391,40 @@ function RoomRace() {
 
   // Render only server-admitted racers. A late joiner absent from the persisted grid is a
   // spectator and cannot manufacture a trailing slot.
+  //
+  // The grid alone decides who gets a car, NOT presence. Presence is a transient channel that
+  // can lag or miss a sync, and gating on it meant a racer who was demonstrably there —
+  // broadcasting transforms from a slot the server assigned — simply never appeared. Presence
+  // is still consulted, but only to dress the car: without it the peer drives the placeholder
+  // rig until its meta arrives.
   useEffect(() => {
     if (!deviceId || !grid) return;
     let cancelled = false;
-    const admittedIds = new Set(grid.map((entry) => entry.deviceId));
     const byDevice = new Map(members.map((member) => [member.deviceId, member]));
     const others = grid
       .filter((entry) => entry.deviceId !== deviceId)
-      .map((entry) => byDevice.get(entry.deviceId))
-      .filter((member): member is PresenceMeta => Boolean(member));
+      .map((entry) => ({ entry, member: byDevice.get(entry.deviceId) ?? null }));
     void (async () => {
       await Promise.all(
-        others.map(async (member) => {
-          if (member.carId && !glbCache.current.has(member.carId)) {
+        others.map(async ({ member }) => {
+          const carId = member?.carId;
+          if (carId && !glbCache.current.has(carId)) {
             try {
-              const { car } = await apiGet<{ car: Car }>(`/api/cars/${member.carId}`);
-              glbCache.current.set(member.carId, car.glbUrl);
+              const { car } = await apiGet<{ car: Car }>(`/api/cars/${carId}`);
+              glbCache.current.set(carId, car.glbUrl);
             } catch {
-              glbCache.current.set(member.carId, null);
+              glbCache.current.set(carId, null);
             }
           }
         }),
       );
       if (cancelled) return;
       setRemotes(
-        others
-          .filter((member) => admittedIds.has(member.deviceId))
-          .map((member) => ({
-            deviceId: member.deviceId,
-            glbUrl: member.carId ? glbCache.current.get(member.carId) ?? null : null,
-            spawnIndex: gridMembership(grid, member.deviceId)?.slot ?? 0,
-          })),
+        others.map(({ entry, member }) => ({
+          deviceId: entry.deviceId,
+          glbUrl: member?.carId ? glbCache.current.get(member.carId) ?? null : null,
+          spawnIndex: entry.slot,
+        })),
       );
     })();
     return () => {

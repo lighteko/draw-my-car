@@ -82,6 +82,11 @@ const TELEPORT_CAST_HEIGHT = 200;
 // below then spreads over several frames. A gate closer than ARROW_SKIP_RADIUS is dropped from
 // the blend — at that range its bearing is mostly noise.
 const ARROW_HEIGHT = 2.4;
+
+// Spectator chase framing — further back and higher than the driver's own camera, because a
+// spectator is reading the situation rather than steering through it.
+const SPECTATOR_CHASE_DIST = 11;
+const SPECTATOR_CHASE_HEIGHT = 5;
 const ARROW_WEIGHTS = [1, 0.8, 0.5];
 const ARROW_SKIP_RADIUS = 3;
 
@@ -220,6 +225,36 @@ export function RaceScene({
       (_, i) => track.gates[(nextGate + i) % total].position,
     );
   }, [track.gates, nextGate]);
+  // Spectators pick a racer to follow; null means the overview orbit.
+  const [watchIndex, setWatchIndex] = useState<number | null>(null);
+  const watchable = useMemo(
+    () =>
+      remotes.map((remote) => ({
+        deviceId: remote.deviceId,
+        name:
+          standings.find((entry) => entry.deviceId === remote.deviceId)?.username ??
+          remote.deviceId.slice(0, 6),
+      })),
+    [remotes, standings],
+  );
+  const watching =
+    watchIndex !== null && watchable.length > 0
+      ? watchable[watchIndex % watchable.length]
+      : null;
+  const cycleWatch = useCallback(
+    (step: number) => {
+      setWatchIndex((current) => {
+        if (watchable.length === 0) return null;
+        // Cycles through the racers and then back out to the overview, so a spectator can
+        // always get the wide shot without hunting for a separate control.
+        const next = current === null ? (step > 0 ? 0 : watchable.length - 1) : current + step;
+        if (next < 0 || next >= watchable.length) return null;
+        return next;
+      });
+    },
+    [watchable.length],
+  );
+
   const [wrongWay, setWrongWay] = useState(false);
   // Lazy init rather than a setState in the effect below: the scene is client-only, so the
   // stored preference is readable on the first render.
@@ -549,7 +584,11 @@ export function RaceScene({
         </Physics>
 
         {spectator ? (
-          <SpectatorCamera track={track} />
+          <SpectatorCamera
+            track={track}
+            remoteBuffers={remoteBuffers ?? emptyBuffers}
+            watchDeviceId={watching?.deviceId ?? null}
+          />
         ) : (
           <ChaseCamera target={carAnchor} bodyRef={chassisRef} />
         )}
@@ -580,6 +619,30 @@ export function RaceScene({
         onRematch={onRematch}
         rematching={rematching}
       />
+      {spectator && watchable.length > 0 && (
+        <div className="race-watch absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2">
+          <button
+            type="button"
+            aria-label="이전 참가자"
+            onClick={() => cycleWatch(-1)}
+            className="touch-target flex items-center justify-center rounded-full bg-black/55 px-3 text-white backdrop-blur transition hover:bg-black/75"
+          >
+            ‹
+          </button>
+          <div className="min-w-36 rounded-full bg-black/55 px-4 py-2 text-center text-sm text-white backdrop-blur">
+            {watching ? watching.name : "전체 보기"}
+          </div>
+          <button
+            type="button"
+            aria-label="다음 참가자"
+            onClick={() => cycleWatch(1)}
+            className="touch-target flex items-center justify-center rounded-full bg-black/55 px-3 text-white backdrop-blur transition hover:bg-black/75"
+          >
+            ›
+          </button>
+        </div>
+      )}
+
       {!spectator && <SpeedMeter bodyRef={chassisRef} />}
       {!spectator && <TouchControls />}
       {adminMode && <AdminDrivePanel tuning={tuning} onChange={setTuning} onSave={saveTuning} />}
@@ -1381,9 +1444,29 @@ function CheckpointEnforcer({
   return null;
 }
 
-/** Slow overview orbit for spectators (no car to follow). */
-function SpectatorCamera({ track }: { track: TrackDef }) {
+/**
+ * Spectator camera: chases whichever racer is being watched, or orbits the whole map when
+ * nobody is picked.
+ *
+ * The chased pose comes from the same snapshot buffer that drives the ghost, so the camera
+ * cannot drift away from the car it is supposed to be on, and no extra refs have to be
+ * threaded through the scene. Orbiting the map was the only option before, which at this
+ * map's scale meant watching ants.
+ */
+function SpectatorCamera({
+  track,
+  remoteBuffers,
+  watchDeviceId,
+}: {
+  track: TrackDef;
+  remoteBuffers: RefObject<Map<string, Snapshot[]>>;
+  watchDeviceId: string | null;
+}) {
   const { camera } = useThree();
+  const chaseTarget = useMemo(() => new THREE.Vector3(), []);
+  const chasePos = useMemo(() => new THREE.Vector3(), []);
+  const chaseQuat = useMemo(() => new THREE.Quaternion(), []);
+  const chaseForward = useMemo(() => new THREE.Vector3(), []);
   const view = useMemo(() => {
     const xs = track.gates.map((g) => g.position[0]);
     const zs = track.gates.map((g) => g.position[2]);
@@ -1394,7 +1477,25 @@ function SpectatorCamera({ track }: { track: TrackDef }) {
   }, [track]);
   const target = useMemo(() => new THREE.Vector3(view.cx, 0, view.cz), [view]);
 
-  useFrame((state) => {
+  useFrame((state, dt) => {
+    const buffer = watchDeviceId ? remoteBuffers.current?.get(watchDeviceId) : undefined;
+    const latest = buffer?.[buffer.length - 1];
+    if (latest) {
+      chasePos.set(latest.p[0], latest.p[1], latest.p[2]);
+      chaseQuat.set(latest.q[0], latest.q[1], latest.q[2], latest.q[3]);
+      chaseForward.set(0, 0, 1).applyQuaternion(chaseQuat).setY(0);
+      if (chaseForward.lengthSq() < 1e-4) chaseForward.set(0, 0, 1);
+      chaseForward.normalize();
+      chaseTarget
+        .copy(chasePos)
+        .addScaledVector(chaseForward, -SPECTATOR_CHASE_DIST)
+        .setY(chasePos.y + SPECTATOR_CHASE_HEIGHT);
+      // Snap when the gap is huge (the watched racer respawned, or we switched target).
+      if (camera.position.distanceTo(chaseTarget) > 40) camera.position.copy(chaseTarget);
+      camera.position.lerp(chaseTarget, Math.min(1, dt * 4));
+      camera.lookAt(chasePos.x, chasePos.y + 0.8, chasePos.z);
+      return;
+    }
     const a = state.clock.elapsedTime * 0.08;
     const dist = view.radius * 1.1 + 20;
     const height = view.radius * 0.7 + 25;

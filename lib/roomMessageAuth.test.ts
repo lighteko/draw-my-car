@@ -14,6 +14,7 @@ import {
   isCredentialConsistent,
   issueRoomCredential,
   parseRoomCredential,
+  replayKey,
   splitCredential,
   verifyRoomCredential,
   withCredential,
@@ -190,7 +191,7 @@ describe("per-message signatures", () => {
     if (!victim || !attacker) throw new Error("Web Crypto unavailable");
 
     const message = { kind: "progress", senderDeviceId: "victim", lap: 3, nextGate: 7 };
-    const canonical = canonicalMessageString("abcd", "victim", 1, NOW, message);
+    const canonical = canonicalMessageString("abcd", "victim", "control", 1, NOW, message);
     // The attacker holds the victim's certificate (public key) but signs with its own key.
     const forged = await attacker.sign(canonical);
     const victimKey = await importVerifyingKey(victim.publicKeyJwk);
@@ -208,9 +209,9 @@ describe("per-message signatures", () => {
     if (!key) throw new Error("key import failed");
 
     const original = { kind: "progress", senderDeviceId: "d1", lap: 1, nextGate: 2 };
-    const signature = await signer.sign(canonicalMessageString("abcd", "d1", 1, NOW, original));
+    const signature = await signer.sign(canonicalMessageString("abcd", "d1", "control", 1, NOW, original));
     const tampered = { ...original, lap: 9 };
-    const tamperedCanonical = canonicalMessageString("abcd", "d1", 1, NOW, tampered);
+    const tamperedCanonical = canonicalMessageString("abcd", "d1", "control", 1, NOW, tampered);
     expect(await verifyMessageSignature(key, tamperedCanonical, signature)).toBe(false);
   });
 
@@ -240,5 +241,63 @@ describe("createReplayGuard", () => {
   it("refuses a message older than the skew window", () => {
     const guard = createReplayGuard();
     expect(guard.accept("d1", 1, NOW - MAX_MESSAGE_AGE_MS - 1, NOW)).toBe(false);
+  });
+});
+
+describe("replay guard across the two channels", () => {
+  it("does not let one channel's sequence starve the other", () => {
+    // A room uses two channels: control (ready/progress/standings) and telemetry (transforms
+    // at 20-30 Hz). They are delivered independently, so their messages interleave on arrival.
+    // With one counter and one guard, whichever lands first advances the sequence and the
+    // other channel's perfectly good messages are refused as replays — which is what made
+    // remote cars vanish mid-race.
+    const guard = createReplayGuard();
+    // Sender emits: transform(1), transform(2), progress(3), transform(4)
+    expect(guard.accept("d1:telemetry", 1, NOW, NOW)).toBe(true);
+    expect(guard.accept("d1:telemetry", 2, NOW, NOW)).toBe(true);
+    // The control message arrives after a later transform has already been processed.
+    expect(guard.accept("d1:telemetry", 4, NOW, NOW)).toBe(true);
+    expect(guard.accept("d1:control", 3, NOW, NOW)).toBe(true);
+  });
+
+  it("still refuses a genuine replay within one channel", () => {
+    const guard = createReplayGuard();
+    expect(guard.accept("d1:telemetry", 7, NOW, NOW)).toBe(true);
+    expect(guard.accept("d1:telemetry", 7, NOW, NOW)).toBe(false);
+    expect(guard.accept("d1:telemetry", 6, NOW, NOW)).toBe(false);
+  });
+});
+
+describe("lane binding", () => {
+  it("a signature made for one lane does not verify on the other", async () => {
+    // Otherwise a captured telemetry frame could be replayed onto the control channel, where
+    // its sequence number would be unrelated to what the receiver has already seen.
+    const signer = await createMessageSigner();
+    if (!signer) throw new Error("Web Crypto unavailable");
+    const key = await importVerifyingKey(signer.publicKeyJwk);
+    if (!key) throw new Error("key import failed");
+
+    const message = { kind: "transform", senderDeviceId: "d1" };
+    const signature = await signer.sign(
+      canonicalMessageString("abcd", "d1", "telemetry", 5, NOW, message),
+    );
+    expect(
+      await verifyMessageSignature(
+        key,
+        canonicalMessageString("abcd", "d1", "telemetry", 5, NOW, message),
+        signature,
+      ),
+    ).toBe(true);
+    expect(
+      await verifyMessageSignature(
+        key,
+        canonicalMessageString("abcd", "d1", "control", 5, NOW, message),
+        signature,
+      ),
+    ).toBe(false);
+  });
+
+  it("gives each lane its own replay slot", () => {
+    expect(replayKey("d1", "control")).not.toBe(replayKey("d1", "telemetry"));
   });
 });
