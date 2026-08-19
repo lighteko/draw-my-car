@@ -1059,14 +1059,18 @@ function AdminTeleporter({
 }
 
 /**
- * DirectionArrow — the flat chevron floating over the local car, aimed down the route.
+ * DirectionArrow — the navigation chevron over the local car.
  *
- * With the gates themselves invisible, this is what tells a player where to go. Its heading is
- * the weighted sum of the unit directions to the next few gates, so it reads as "the way the
- * track goes" rather than "that post right there" and stops flicking as gates are passed. The
- * shape is a flat unlit chevron lying in the ground plane — no shading, no depth to it. It is
- * white rather than the track accent: the accent is a sand tone on a sand-coloured desert map,
- * so it disappeared into the road exactly where it was needed.
+ * With the gates invisible, this is the only thing telling a player where to go, so it has to
+ * be legible at a glance. Lying it flat on the ground plane did not work: the chase camera
+ * sits about 1.6 m above it and 8 m behind, so a horizontal shape is seen at roughly 11
+ * degrees — edge-on, a sliver. Recolouring it changed nothing because the problem was never
+ * the colour.
+ *
+ * So it billboards. The chevron always faces the camera and the turn is expressed as rotation
+ * *within the screen*, exactly the way a car's navigation arrow behaves: straight on points
+ * up, a right-hander leans it right. Fully visible from every camera angle, and it reads
+ * without being explained.
  */
 function DirectionArrow({
   bodyRef,
@@ -1077,14 +1081,18 @@ function DirectionArrow({
   targets: Vec3[];
 }) {
   const group = useRef<THREE.Group>(null);
+  const camera = useThree((state) => state.camera);
+  const carQuat = useMemo(() => new THREE.Quaternion(), []);
+  const forward = useMemo(() => new THREE.Vector3(), []);
+  const smoothed = useRef(0);
 
   const shape = useMemo(() => {
-    // Drawn in the XY plane with the tip at -Y; the mesh is laid flat so -Y becomes +Z.
+    // Tip at +Y, so an unrotated chevron reads as "straight ahead" once billboarded.
     const s = new THREE.Shape();
-    s.moveTo(0, -1.05);
-    s.lineTo(0.85, 0.55);
-    s.lineTo(0, 0.15);
-    s.lineTo(-0.85, 0.55);
+    s.moveTo(0, 1.05);
+    s.lineTo(-0.85, -0.55);
+    s.lineTo(0, -0.15);
+    s.lineTo(0.85, -0.55);
     s.closePath();
     return s;
   }, []);
@@ -1124,25 +1132,50 @@ function DirectionArrow({
       sz = fallbackZ;
     }
 
+    // Where to go relative to where the car points: that difference is the whole message, and
+    // it is the part that still means something once drawn in screen space.
+    const rotation = body.rotation();
+    carQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
+    forward.set(0, 0, 1).applyQuaternion(carQuat);
+    const carYaw =
+      forward.x * forward.x + forward.z * forward.z > 1e-4
+        ? Math.atan2(forward.x, forward.z)
+        : smoothed.current;
+    const relative = Math.atan2(sx, sz) - carYaw;
+    const wrapped =
+      ((relative - smoothed.current + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) -
+      Math.PI;
+    smoothed.current += wrapped * Math.min(1, dt * 10);
+
     const bob = Math.sin(state.clock.elapsedTime * 3) * 0.1;
     g.position.set(t.x, t.y + ARROW_HEIGHT + bob, t.z);
-
-    // Turn the short way round, at a rate that settles in a few frames.
-    const yaw = Math.atan2(sx, sz);
-    const delta = ((yaw - g.rotation.y + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-    g.rotation.y += delta * Math.min(1, dt * 10);
+    // Face the camera, then lean by the turn. World yaw grows clockwise seen from above while
+    // a positive roll on screen is counter-clockwise, hence the negation.
+    g.quaternion.copy(camera.quaternion);
+    g.rotateZ(-smoothed.current);
   });
 
   return (
     <group ref={group} visible={false}>
-      {/* Backing plate, a hair below and larger, so the chevron keeps its edge on any map. */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} scale={1.18}>
+      {/* Backing plate, a hair behind and larger, so the chevron keeps its edge on any map. */}
+      <mesh position={[0, 0, -0.02]} scale={1.2}>
         <shapeGeometry args={[shape]} />
-        <meshBasicMaterial color="#120d09" transparent opacity={0.7} side={THREE.DoubleSide} depthWrite={false} />
+        <meshBasicMaterial
+          color="#120d09"
+          transparent
+          opacity={0.75}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
       </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh>
         <shapeGeometry args={[shape]} />
-        <meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} toneMapped={false} depthWrite={false} />
+        <meshBasicMaterial
+          color="#ffffff"
+          side={THREE.DoubleSide}
+          toneMapped={false}
+          depthWrite={false}
+        />
       </mesh>
     </group>
   );
