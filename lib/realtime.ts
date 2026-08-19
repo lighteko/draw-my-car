@@ -8,11 +8,20 @@ import { parseRoomMessage } from "./roomRules";
 import { latestPresencePerKey } from "./presence";
 import {
   MAX_VERIFY_BATCH,
+  MESSAGE_SEQ_FIELD,
+  MESSAGE_SIGNATURE_FIELD,
+  MESSAGE_TIMESTAMP_FIELD,
+  canonicalMessageString,
+  createMessageSigner,
+  createReplayGuard,
   credentialCacheKey,
+  importVerifyingKey,
   isCredentialConsistent,
   parseRoomCredential,
   splitCredential,
+  verifyMessageSignature,
   withCredential,
+  type MessageSigner,
   type RoomCredential,
 } from "./roomMessageAuth";
 
@@ -151,26 +160,110 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
    * outright. Dropping (rather than queuing) is what makes the first message from an
    * unverified sender safe — by the time the answer arrives, that message is gone.
    */
-  const authenticate = (payload: unknown): RoomMessage | null => {
+  // Certified keys, imported once per sender. Importing is the only expensive step; the
+  // per-message verify that follows is local and needs no network.
+  const senderKeys = new Map<string, Promise<CryptoKey | null>>();
+  const replayGuard = createReplayGuard();
+
+  /**
+   * Decide whether a payload really came from the device it names.
+   *
+   * The certificate alone is not proof — it travels in the clear to every member, so anyone
+   * can copy one. What settles it is the signature over this exact message, checked against
+   * the public key the server certified for that device.
+   */
+  const authenticate = async (payload: unknown): Promise<RoomMessage | null> => {
     const { message, credential } = splitCredential(payload);
     if (!credential) return null;
     if (!isCredentialConsistent(credential, message, code)) return null;
     if (!verifier.isVerified(credential)) return null;
-    return parseRoomMessage(message);
+    const parsed = parseRoomMessage(message);
+    if (!parsed) return null;
+
+    const envelope = payload as Record<string, unknown>;
+    const signature = envelope[MESSAGE_SIGNATURE_FIELD];
+    const seq = envelope[MESSAGE_SEQ_FIELD];
+    const timestamp = envelope[MESSAGE_TIMESTAMP_FIELD];
+    if (typeof signature !== "string" || typeof seq !== "number" || typeof timestamp !== "number") {
+      return null;
+    }
+    if (!replayGuard.accept(credential.deviceId, seq, timestamp)) return null;
+
+    let keyPromise = senderKeys.get(credential.publicKeyJwk);
+    if (!keyPromise) {
+      keyPromise = importVerifyingKey(credential.publicKeyJwk);
+      senderKeys.set(credential.publicKeyJwk, keyPromise);
+    }
+    const key = await keyPromise;
+    if (!key) return null;
+    const canonical = canonicalMessageString(
+      code,
+      credential.deviceId,
+      seq,
+      timestamp,
+      parsed,
+    );
+    return (await verifyMessageSignature(key, canonical, signature)) ? parsed : null;
   };
 
-  channel.on("broadcast", { event: "msg" }, ({ payload }) => {
-    const message = authenticate(payload);
-    if (message) handlers.onMessage(message);
-  });
+  /**
+   * Verification is async, so dispatch is serialised per channel: progress messages are
+   * order-sensitive and the owner's rules reject a rewind, which would silently drop a lap
+   * if two messages from one sender raced each other through the crypto.
+   */
+  const makeDispatcher = (handle: (msg: RoomMessage) => void) => {
+    let chain: Promise<void> = Promise.resolve();
+    return (payload: unknown): void => {
+      chain = chain
+        .then(async () => {
+          const message = await authenticate(payload);
+          if (message) handle(message);
+        })
+        .catch(() => {});
+    };
+  };
 
-  telemetryChannel.on("broadcast", { event: "msg" }, ({ payload }) => {
-    const message = authenticate(payload);
-    if (!message) return;
+  const dispatchControl = makeDispatcher((message) => handlers.onMessage(message));
+  const dispatchTelemetry = makeDispatcher((message) => {
     if (message.kind === "transform") handlers.onMessage(message);
   });
 
-  // Our own credential, fetched once per join. A failure is not fatal: we keep sending
+  channel.on("broadcast", { event: "msg" }, ({ payload }) => dispatchControl(payload));
+  telemetryChannel.on("broadcast", { event: "msg" }, ({ payload }) => dispatchTelemetry(payload));
+
+  // This tab's signing key. Generated once, private half non-extractable, so possession — not
+  // mere presentation of a public certificate — is what proves a message came from us.
+  let signer: MessageSigner | null = null;
+  let signerPromise: Promise<MessageSigner | null> | null = null;
+  let outboundSeq = 0;
+  const ensureSigner = async (): Promise<MessageSigner | null> => {
+    if (signer) return signer;
+    signerPromise ??= createMessageSigner();
+    signer = await signerPromise;
+    return signer;
+  };
+
+  /**
+   * Attach the certificate plus a signature over this exact message. The sequence number and
+   * timestamp are inside the signed string, so a captured payload cannot be rebroadcast: the
+   * receiver has already moved past that sequence.
+   */
+  const signedPayload = async (msg: RoomMessage): Promise<Record<string, unknown>> => {
+    const base = withCredential(msg, credential);
+    const active = await ensureSigner();
+    if (!active || !credential) return base;
+    const seq = ++outboundSeq;
+    const timestamp = Date.now();
+    const canonical = canonicalMessageString(code, credential.deviceId, seq, timestamp, msg);
+    return {
+      ...base,
+      [MESSAGE_SEQ_FIELD]: seq,
+      [MESSAGE_TIMESTAMP_FIELD]: timestamp,
+      [MESSAGE_SIGNATURE_FIELD]: await active.sign(canonical),
+    };
+  };
+
+  // Our own certificate, fetched once per join. A failure is not fatal: we keep sending
   // (unsigned) so this client stays usable, and stay quiet about it.
   let credential: RoomCredential | null = null;
   let lastTokenAttempt = 0;
@@ -180,9 +273,12 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
     if (now - lastTokenAttempt < TOKEN_RETRY_MS) return;
     lastTokenAttempt = now;
     try {
+      const active = await ensureSigner();
+      if (!active) return;
       const res = await fetch(`/api/rooms/${encodeURIComponent(code)}/token`, {
         method: "POST",
         headers: { "content-type": "application/json", ...deviceHeaders() },
+        body: JSON.stringify({ publicKeyJwk: active.publicKeyJwk }),
       });
       if (!res.ok) return;
       const body = (await res.json()) as { enforced?: unknown };
@@ -305,7 +401,7 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
   return {
     async send(msg) {
       if (left) throw new Error("Cannot send after leaving the Realtime room");
-      // Cheap once we hold a token; rate-limited to one attempt per 30s while we do not.
+      // Cheap once we hold a certificate; rate-limited to one attempt per 30s while we do not.
       if (!credential) void ensureCredential();
       if (msg.kind === "transform") {
         // Transforms are ephemeral. Dropping the first few frames while telemetry joins
@@ -314,14 +410,14 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
         await telemetryChannel.send({
           type: "broadcast",
           event: "msg",
-          payload: withCredential(msg, credential),
+          payload: await signedPayload(msg),
         });
         return;
       }
       const result = await channel.send({
         type: "broadcast",
         event: "msg",
-        payload: withCredential(msg, credential),
+        payload: await signedPayload(msg),
       });
       if (result !== "ok") throw new Error(`Realtime broadcast ${result}`);
     },

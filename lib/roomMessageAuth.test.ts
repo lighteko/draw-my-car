@@ -1,6 +1,13 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   CREDENTIAL_TTL_MS,
+  MAX_MESSAGE_AGE_MS,
+  canonicalMessageString,
+  createMessageSigner,
+  createReplayGuard,
+  importVerifyingKey,
+  stableStringify,
+  verifyMessageSignature,
   canonicalCredentialString,
   claimedSenderDeviceId,
   credentialCacheKey,
@@ -14,6 +21,7 @@ import {
 } from "./roomMessageAuth";
 
 const NOW = 1_700_000_000_000;
+const KEY = '{"kty":"EC","crv":"P-256","x":"test-x","y":"test-y"}';
 
 beforeAll(() => {
   process.env.ROOM_MESSAGE_SECRET = "test-secret-value";
@@ -21,7 +29,7 @@ beforeAll(() => {
 
 describe("issueRoomCredential / verifyRoomCredential", () => {
   it("verifies a freshly issued credential inside its window", async () => {
-    const credential = await issueRoomCredential("device-a", "ABCD", NOW);
+    const credential = await issueRoomCredential("device-a", "ABCD", KEY, NOW);
     expect(credential.expiresAt - credential.issuedAt).toBe(CREDENTIAL_TTL_MS);
     expect(await verifyRoomCredential(credential, "ABCD", NOW)).toBe(true);
     // Room codes are case-insensitive everywhere else in the app.
@@ -29,18 +37,18 @@ describe("issueRoomCredential / verifyRoomCredential", () => {
   });
 
   it("rejects a credential replayed into a different room", async () => {
-    const credential = await issueRoomCredential("device-a", "ABCD", NOW);
+    const credential = await issueRoomCredential("device-a", "ABCD", KEY, NOW);
     expect(await verifyRoomCredential(credential, "WXYZ", NOW)).toBe(false);
   });
 
   it("rejects a credential outside its validity window", async () => {
-    const credential = await issueRoomCredential("device-a", "ABCD", NOW);
+    const credential = await issueRoomCredential("device-a", "ABCD", KEY, NOW);
     expect(await verifyRoomCredential(credential, "ABCD", NOW - 1)).toBe(false);
     expect(await verifyRoomCredential(credential, "ABCD", NOW + CREDENTIAL_TTL_MS)).toBe(false);
   });
 
   it("rejects a credential whose signed fields were tampered with", async () => {
-    const credential = await issueRoomCredential("device-a", "ABCD", NOW);
+    const credential = await issueRoomCredential("device-a", "ABCD", KEY, NOW);
     // The whole point: swapping in another device id must not survive the MAC.
     expect(await verifyRoomCredential({ ...credential, deviceId: "device-b" }, "ABCD", NOW)).toBe(
       false,
@@ -58,8 +66,8 @@ describe("issueRoomCredential / verifyRoomCredential", () => {
   });
 
   it("gives two devices different signatures and cache keys", async () => {
-    const a = await issueRoomCredential("device-a", "ABCD", NOW);
-    const b = await issueRoomCredential("device-b", "ABCD", NOW);
+    const a = await issueRoomCredential("device-a", "ABCD", KEY, NOW);
+    const b = await issueRoomCredential("device-b", "ABCD", KEY, NOW);
     expect(a.signature).not.toBe(b.signature);
     expect(credentialCacheKey(a)).not.toBe(credentialCacheKey(b));
   });
@@ -70,6 +78,7 @@ describe("issueRoomCredential / verifyRoomCredential", () => {
       roomCode: "b\nc",
       issuedAt: NOW,
       expiresAt: NOW + 1,
+      publicKeyJwk: KEY,
     });
     expect(a).not.toBe(
       canonicalCredentialString({
@@ -77,11 +86,12 @@ describe("issueRoomCredential / verifyRoomCredential", () => {
         roomCode: "c",
         issuedAt: NOW,
         expiresAt: NOW + 1,
+      publicKeyJwk: KEY,
       }),
     );
     // And the two must therefore not share a signature either.
-    const one = await issueRoomCredential("a", "b\nc", NOW);
-    const two = await issueRoomCredential("a\nb", "c", NOW);
+    const one = await issueRoomCredential("a", "b\nc", KEY, NOW);
+    const two = await issueRoomCredential("a\nb", "c", KEY, NOW);
     expect(one.signature).not.toBe(two.signature);
   });
 });
@@ -101,14 +111,14 @@ describe("parseRoomCredential", () => {
   });
 
   it("accepts a well-formed credential", async () => {
-    const credential = await issueRoomCredential("device-a", "ABCD", NOW);
+    const credential = await issueRoomCredential("device-a", "ABCD", KEY, NOW);
     expect(parseRoomCredential(JSON.parse(JSON.stringify(credential)))).toEqual(credential);
   });
 });
 
 describe("envelope", () => {
   it("round-trips a message and its credential without disturbing the message", async () => {
-    const credential = await issueRoomCredential("device-a", "ABCD", NOW);
+    const credential = await issueRoomCredential("device-a", "ABCD", KEY, NOW);
     const message = { kind: "room_changed", version: "v1" };
     const { message: out, credential: parsed } = splitCredential(
       withCredential(message, credential),
@@ -144,6 +154,7 @@ describe("isCredentialConsistent", () => {
     roomCode: "abcd",
     issuedAt: NOW,
     expiresAt: NOW + CREDENTIAL_TTL_MS,
+    publicKeyJwk: KEY,
     signature: "irrelevant-here",
   };
 
@@ -167,5 +178,67 @@ describe("isCredentialConsistent", () => {
     expect(isCredentialConsistent(credential, { kind: "room_changed", version: "v1" }, "abcd", NOW)).toBe(
       true,
     );
+  });
+});
+
+describe("per-message signatures", () => {
+  it("a captured certificate cannot sign a message the holder never sent", async () => {
+    // The attack the bearer-token design allowed: certificates are broadcast in the clear,
+    // so anyone listening can copy one. Only the private key can produce the signature.
+    const victim = await createMessageSigner();
+    const attacker = await createMessageSigner();
+    if (!victim || !attacker) throw new Error("Web Crypto unavailable");
+
+    const message = { kind: "progress", senderDeviceId: "victim", lap: 3, nextGate: 7 };
+    const canonical = canonicalMessageString("abcd", "victim", 1, NOW, message);
+    // The attacker holds the victim's certificate (public key) but signs with its own key.
+    const forged = await attacker.sign(canonical);
+    const victimKey = await importVerifyingKey(victim.publicKeyJwk);
+    if (!victimKey) throw new Error("key import failed");
+    expect(await verifyMessageSignature(victimKey, canonical, forged)).toBe(false);
+
+    const genuine = await victim.sign(canonical);
+    expect(await verifyMessageSignature(victimKey, canonical, genuine)).toBe(true);
+  });
+
+  it("a signature does not carry over to a tampered body", async () => {
+    const signer = await createMessageSigner();
+    if (!signer) throw new Error("Web Crypto unavailable");
+    const key = await importVerifyingKey(signer.publicKeyJwk);
+    if (!key) throw new Error("key import failed");
+
+    const original = { kind: "progress", senderDeviceId: "d1", lap: 1, nextGate: 2 };
+    const signature = await signer.sign(canonicalMessageString("abcd", "d1", 1, NOW, original));
+    const tampered = { ...original, lap: 9 };
+    const tamperedCanonical = canonicalMessageString("abcd", "d1", 1, NOW, tampered);
+    expect(await verifyMessageSignature(key, tamperedCanonical, signature)).toBe(false);
+  });
+
+  it("orders object keys so both peers canonicalise identically", () => {
+    expect(stableStringify({ b: 1, a: [3, { d: 4, c: 5 }] })).toBe(
+      stableStringify({ a: [3, { c: 5, d: 4 }], b: 1 }),
+    );
+  });
+});
+
+describe("createReplayGuard", () => {
+  it("refuses a sequence number it has already seen", () => {
+    const guard = createReplayGuard();
+    expect(guard.accept("d1", 1, NOW, NOW)).toBe(true);
+    expect(guard.accept("d1", 2, NOW, NOW)).toBe(true);
+    // The exact bytes of message 2, rebroadcast by an eavesdropper.
+    expect(guard.accept("d1", 2, NOW, NOW)).toBe(false);
+    expect(guard.accept("d1", 1, NOW, NOW)).toBe(false);
+  });
+
+  it("tracks senders independently", () => {
+    const guard = createReplayGuard();
+    expect(guard.accept("d1", 5, NOW, NOW)).toBe(true);
+    expect(guard.accept("d2", 1, NOW, NOW)).toBe(true);
+  });
+
+  it("refuses a message older than the skew window", () => {
+    const guard = createReplayGuard();
+    expect(guard.accept("d1", 1, NOW - MAX_MESSAGE_AGE_MS - 1, NOW)).toBe(false);
   });
 });

@@ -5,15 +5,28 @@
  * `room:{code}` and broadcast a payload claiming any `deviceId`. Nothing in the payload was
  * ever attributable, so a spectator could forge another player's progress or standings.
  *
- * The fix is a server-issued credential: the server HMACs (deviceId, roomCode, validity
- * window) with a secret that never leaves the server, the client attaches that credential to
- * everything it broadcasts, and receivers only dispatch a message whose credential is valid
- * *and* names the same device the message claims to come from. Browsers cannot check an HMAC
- * without the secret, so they ask the server once per sender (see the /verify route) and cache
- * the answer for the session — verification must never sit on the per-frame telemetry path.
+ * A server-issued bearer credential is not enough on its own. Every broadcast is delivered to
+ * every member in the clear, so the first message a player sends hands its credential to
+ * everyone listening; anyone can then staple that credential onto messages of their own. A
+ * bearer token only stops an attacker who never listened.
+ *
+ * So the sender proves possession of a key instead of merely presenting one:
+ *
+ *   1. Each client generates an ECDSA P-256 keypair. The private key never leaves the tab.
+ *   2. The server signs a certificate binding (deviceId, roomCode, public key, validity) with
+ *      its HMAC secret. The certificate is public — it is meant to be broadcast.
+ *   3. Every control message is signed with the private key over a canonical string that
+ *      includes the message body, a sequence number and a timestamp.
+ *   4. Receivers check the certificate once per sender (the /verify route, cached for the
+ *      session) and then verify each message locally against the certified public key. No
+ *      round trip per message, and a captured message cannot be modified or replayed.
+ *
+ * Telemetry (`transform`, 20-30 Hz) is deliberately left at certificate-only checking: it
+ * moves ghost cars and nothing else, and per-frame asymmetric verification is not worth the
+ * CPU. Spoofed telemetry can make a ghost jump; it cannot affect standings.
  *
  * This module is imported by both the API routes and the browser. Only the routes call the
- * signing/verifying helpers; the secret readers are never reachable from client code.
+ * server-secret helpers; they are never reachable from client code.
  */
 
 /** Six hours: long enough to outlive a session, short enough that a leaked token dies. */
@@ -30,7 +43,9 @@ export interface RoomCredential {
   roomCode: string;
   issuedAt: number;
   expiresAt: number;
-  /** HMAC-SHA256 of the canonical string, base64url. */
+  /** The sender's ECDSA P-256 public key, JWK-serialised. Public by design. */
+  publicKeyJwk: string;
+  /** HMAC-SHA256 of the canonical string, base64url. The server vouches for the binding. */
   signature: string;
 }
 
@@ -43,11 +58,12 @@ export function canonicalCredentialString(
   credential: Omit<RoomCredential, "signature">,
 ): string {
   return [
-    "dmc-room-token.v1",
+    "dmc-room-cert.v2",
     credential.deviceId,
     normalizeRoomCode(credential.roomCode),
     String(credential.issuedAt),
     String(credential.expiresAt),
+    credential.publicKeyJwk,
   ]
     .map((field) => `${field.length}:${field}`)
     .join("|");
@@ -117,6 +133,7 @@ async function sign(canonical: string): Promise<string> {
 export async function issueRoomCredential(
   deviceId: string,
   roomCode: string,
+  publicKeyJwk: string,
   now: number = Date.now(),
 ): Promise<RoomCredential> {
   const unsigned = {
@@ -124,6 +141,7 @@ export async function issueRoomCredential(
     roomCode: normalizeRoomCode(roomCode),
     issuedAt: now,
     expiresAt: now + CREDENTIAL_TTL_MS,
+    publicKeyJwk,
   };
   return { ...unsigned, signature: await sign(canonicalCredentialString(unsigned)) };
 }
@@ -167,6 +185,7 @@ export function parseRoomCredential(value: unknown): RoomCredential | null {
   if (
     !isBoundedString(value.deviceId, 256) ||
     !isBoundedString(value.roomCode, 64) ||
+    !isBoundedString(value.publicKeyJwk, 1024) ||
     !isBoundedString(value.signature, 128) ||
     !Number.isFinite(value.issuedAt) ||
     !Number.isFinite(value.expiresAt) ||
@@ -179,6 +198,7 @@ export function parseRoomCredential(value: unknown): RoomCredential | null {
     roomCode: value.roomCode,
     issuedAt: value.issuedAt as number,
     expiresAt: value.expiresAt as number,
+    publicKeyJwk: value.publicKeyJwk,
     signature: value.signature,
   };
 }
@@ -241,4 +261,153 @@ export function isCredentialConsistent(
 /** Cache key for a decided (deviceId, signature) pair. */
 export function credentialCacheKey(credential: RoomCredential): string {
   return `${credential.deviceId} ${credential.signature}`;
+}
+
+// --- per-message signatures (browser) ---
+
+/** Envelope keys carrying the proof alongside a RoomMessage. */
+export const MESSAGE_SIGNATURE_FIELD = "__sig";
+export const MESSAGE_SEQ_FIELD = "__seq";
+export const MESSAGE_TIMESTAMP_FIELD = "__ts";
+
+/**
+ * How far a sender's clock may disagree with ours before its messages are refused. Wide
+ * enough for ordinary phone clock drift, narrow enough that a captured message stops being
+ * replayable in minutes rather than hours.
+ */
+export const MAX_MESSAGE_AGE_MS = 60_000;
+
+const KEY_ALGORITHM = { name: "ECDSA", namedCurve: "P-256" } as const;
+const SIGN_ALGORITHM = { name: "ECDSA", hash: "SHA-256" } as const;
+
+function base64urlToBytes(value: string): Uint8Array<ArrayBuffer> | null {
+  try {
+    const padded = value.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
+    const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Deterministic JSON. Two clients must produce byte-identical input for the same message or
+ * every signature fails, and object key order is not guaranteed across engines.
+ */
+export function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  const body = Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",");
+  return `{${body}}`;
+}
+
+/** What the sender's private key actually signs: the body, plus who/where/when/which. */
+export function canonicalMessageString(
+  roomCode: string,
+  deviceId: string,
+  seq: number,
+  timestamp: number,
+  message: unknown,
+): string {
+  return [
+    "dmc-room-msg.v1",
+    normalizeRoomCode(roomCode),
+    deviceId,
+    String(seq),
+    String(timestamp),
+    stableStringify(message),
+  ]
+    .map((field) => `${field.length}:${field}`)
+    .join("|");
+}
+
+export interface MessageSigner {
+  publicKeyJwk: string;
+  sign(canonical: string): Promise<string>;
+}
+
+/** A fresh keypair for this tab. The private key is non-extractable and never transmitted. */
+export async function createMessageSigner(): Promise<MessageSigner | null> {
+  try {
+    const pair = await globalThis.crypto.subtle.generateKey(KEY_ALGORITHM, false, [
+      "sign",
+      "verify",
+    ]);
+    const jwk = await globalThis.crypto.subtle.exportKey("jwk", pair.publicKey);
+    return {
+      publicKeyJwk: JSON.stringify(jwk),
+      async sign(canonical: string): Promise<string> {
+        const mac = await globalThis.crypto.subtle.sign(
+          SIGN_ALGORITHM,
+          pair.privateKey,
+          new TextEncoder().encode(canonical),
+        );
+        return base64url(new Uint8Array(mac));
+      },
+    };
+  } catch {
+    // No Web Crypto (insecure origin, ancient browser): the caller falls back to unsigned.
+    return null;
+  }
+}
+
+/** Import a peer's certified public key so its messages can be checked without the server. */
+export async function importVerifyingKey(publicKeyJwk: string): Promise<CryptoKey | null> {
+  try {
+    return await globalThis.crypto.subtle.importKey(
+      "jwk",
+      JSON.parse(publicKeyJwk) as JsonWebKey,
+      KEY_ALGORITHM,
+      false,
+      ["verify"],
+    );
+  } catch {
+    return null;
+  }
+}
+
+export async function verifyMessageSignature(
+  key: CryptoKey,
+  canonical: string,
+  signature: string,
+): Promise<boolean> {
+  const bytes = base64urlToBytes(signature);
+  if (!bytes) return false;
+  try {
+    return await globalThis.crypto.subtle.verify(
+      SIGN_ALGORITHM,
+      key,
+      bytes,
+      new TextEncoder().encode(canonical),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Refuses a message this sender already sent, or one old enough to have been captured and
+ * rebroadcast. Sequence numbers are per sender and only ever move forward, so a recording of
+ * the channel is worthless the moment the real sender moves on.
+ */
+export function createReplayGuard(): {
+  accept(deviceId: string, seq: number, timestamp: number, now?: number): boolean;
+} {
+  const lastSeq = new Map<string, number>();
+  return {
+    accept(deviceId, seq, timestamp, now = Date.now()) {
+      if (!Number.isFinite(seq) || !Number.isFinite(timestamp)) return false;
+      if (Math.abs(now - timestamp) > MAX_MESSAGE_AGE_MS) return false;
+      const previous = lastSeq.get(deviceId);
+      if (previous !== undefined && seq <= previous) return false;
+      lastSeq.set(deviceId, seq);
+      return true;
+    },
+  };
 }

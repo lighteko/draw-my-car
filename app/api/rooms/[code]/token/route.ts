@@ -19,6 +19,14 @@ export async function POST(
     return NextResponse.json({ error: "device id required" }, { status: 400 });
   }
 
+  // The client generates its own keypair and sends only the public half; the certificate we
+  // hand back binds that key to this device and room.
+  const body = (await req.json().catch(() => null)) as { publicKeyJwk?: unknown } | null;
+  const publicKeyJwk = typeof body?.publicKeyJwk === "string" ? body.publicKeyJwk : null;
+  if (!publicKeyJwk || publicKeyJwk.length > 1024) {
+    return NextResponse.json({ error: "public key required" }, { status: 400 });
+  }
+
   const room = await getRoom(code);
   if (!room) return NextResponse.json({ error: "room not found" }, { status: 404 });
 
@@ -28,5 +36,5 @@ export async function POST(
     return NextResponse.json({ enforced: false });
   }
 
-  return NextResponse.json({ enforced: true, ...(await issueRoomCredential(deviceId, code)) });
+  return NextResponse.json({ enforced: true, ...(await issueRoomCredential(deviceId, code, publicKeyJwk)) });
 }

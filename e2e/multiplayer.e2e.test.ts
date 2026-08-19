@@ -21,12 +21,34 @@
  * dispatched by `kind`; presence tracked under the member's sessionId) without importing that
  * "use client" module, which caches a single browser client and would collapse both players
  * onto one connection.
+ *
+ * Every broadcast is signed exactly the way a real client signs it: each player generates its
+ * own ECDSA P-256 keypair (createMessageSigner), fetches a server-issued certificate from
+ * POST /api/rooms/[code]/token, and every outbound payload carries `{ __cred, __seq, __ts,
+ * __sig }` per roomMessageAuth.ts. The canonical string and envelope helpers are imported from
+ * lib/roomMessageAuth.ts rather than reimplemented, so the harness cannot silently drift from
+ * what the app actually does. Receiver-side verification (certificate check via /verify,
+ * per-message signature check, replay guard) is also driven through those same helpers.
  */
 
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { createClient, type RealtimeChannel, type SupabaseClient } from "@supabase/supabase-js";
 import type { GridSlot, PresenceMeta, RoomMessage, Standing } from "@/lib/roomTypes";
+import {
+  MESSAGE_SEQ_FIELD,
+  MESSAGE_SIGNATURE_FIELD,
+  MESSAGE_TIMESTAMP_FIELD,
+  canonicalMessageString,
+  createMessageSigner,
+  createReplayGuard,
+  importVerifyingKey,
+  parseRoomCredential,
+  verifyMessageSignature,
+  withCredential,
+  type MessageSigner,
+  type RoomCredential,
+} from "@/lib/roomMessageAuth";
 
 const BASE_URL = process.env.E2E_BASE_URL;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -34,6 +56,18 @@ const SUPABASE_ANON_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 const HAVE_ENV = Boolean(BASE_URL && SUPABASE_URL && SUPABASE_ANON_KEY);
+
+// Asking for the suite and silently getting nothing is the worst outcome: it reads as a pass.
+// Skipping is only acceptable when the caller never asked for it in the first place.
+if (BASE_URL && !HAVE_ENV) {
+  const missing = [
+    !SUPABASE_URL && "NEXT_PUBLIC_SUPABASE_URL",
+    !SUPABASE_ANON_KEY && "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+  ].filter(Boolean);
+  throw new Error(
+    `E2E_BASE_URL is set but ${missing.join(", ")} is missing, so the suite would have skipped silently.`,
+  );
+}
 
 // ---------------------------------------------------------------------------------------------
 // HTTP helpers — a minimal hand-rolled cookie jar, since this is meant to look like a browser
@@ -78,21 +112,44 @@ async function api<T = unknown>(
 // `kind`, presence tracked under the member's sessionId.
 // ---------------------------------------------------------------------------------------------
 
+/** Fetch a signed certificate the same way lib/realtime.ts does: POST /token with our pubkey. */
+async function issueCredential(
+  code: string,
+  deviceId: string,
+  publicKeyJwk: string,
+): Promise<RoomCredential | null> {
+  const res = await api<Record<string, unknown>>(`/api/rooms/${code}/token`, {
+    method: "POST",
+    deviceId,
+    body: JSON.stringify({ publicKeyJwk }),
+  });
+  if (res.status !== 200) throw new Error(`token request failed: ${res.status}`);
+  if (res.body.enforced === false) return null; // deployment has no signing secret configured
+  return parseRoomCredential(res.body);
+}
+
 interface PlayerConn {
   deviceId: string;
   sessionId: string;
   client: SupabaseClient;
   channel: RealtimeChannel;
+  credential: RoomCredential | null;
+  signer: MessageSigner | null;
   presence: PresenceMeta[];
   messages: RoomMessage[];
+  rawMessages: unknown[];
   waitForSubscribed(): Promise<void>;
   send(msg: RoomMessage): Promise<void>;
+  /** Broadcast a raw, pre-built payload — used by the security tests to send malformed envelopes. */
+  sendRaw(payload: unknown): Promise<void>;
+  /** Build a signed envelope without sending it, so a test can tamper with it first. */
+  signEnvelope(code: string, msg: RoomMessage, seq?: number, timestamp?: number): Promise<Record<string, unknown>>;
   track(meta: PresenceMeta): Promise<void>;
   waitForMessage(pred: (msg: RoomMessage) => boolean, timeoutMs?: number): Promise<RoomMessage>;
   close(): void;
 }
 
-function connectPlayer(code: string, deviceId: string): PlayerConn {
+async function connectPlayer(code: string, deviceId: string): Promise<PlayerConn> {
   const sessionId = randomUUID();
   const client = createClient(SUPABASE_URL as string, SUPABASE_ANON_KEY as string, {
     auth: { persistSession: false },
@@ -101,8 +158,14 @@ function connectPlayer(code: string, deviceId: string): PlayerConn {
     config: { presence: { key: sessionId }, broadcast: { self: false, ack: true } },
   });
 
+  // Generate this player's keypair and certificate up front, exactly as lib/realtime.ts does
+  // before it ever sends a control message.
+  const signer = await createMessageSigner();
+  const credential = signer ? await issueCredential(code, deviceId, signer.publicKeyJwk) : null;
+
   const presenceState: PresenceMeta[] = [];
   const messages: RoomMessage[] = [];
+  const rawMessages: unknown[] = [];
   const waiters: Array<{ pred: (msg: RoomMessage) => boolean; resolve: (m: RoomMessage) => void }> = [];
 
   channel.on("presence", { event: "sync" }, () => {
@@ -116,7 +179,16 @@ function connectPlayer(code: string, deviceId: string): PlayerConn {
   });
 
   channel.on("broadcast", { event: "msg" }, ({ payload }) => {
-    const msg = payload as RoomMessage;
+    rawMessages.push(payload);
+    // The harness records only the message body for waitForMessage purposes; auth is exercised
+    // separately by the security tests below, mirroring the split between splitCredential and
+    // parseRoomMessage in lib/realtime.ts.
+    const { __cred, __seq, __ts, __sig, ...rest } = payload as Record<string, unknown>;
+    void __cred;
+    void __seq;
+    void __ts;
+    void __sig;
+    const msg = rest as RoomMessage;
     messages.push(msg);
     for (const waiter of [...waiters]) {
       if (waiter.pred(msg)) {
@@ -132,6 +204,10 @@ function connectPlayer(code: string, deviceId: string): PlayerConn {
     subscribedResolve = resolve;
     subscribedReject = reject;
   });
+  // Once a test has moved on (closed the connection in afterEach), a later CLOSED/error status
+  // still fires this same rejection handler. Give it a no-op catch so that doesn't surface as an
+  // unhandled rejection — the test itself already observed (or didn't need) the original result.
+  subscribed.catch(() => {});
 
   channel.subscribe((status, error) => {
     if (status === "SUBSCRIBED") {
@@ -141,18 +217,48 @@ function connectPlayer(code: string, deviceId: string): PlayerConn {
     }
   });
 
+  let outboundSeq = 0;
+
+  const signEnvelope = async (
+    roomCode: string,
+    msg: RoomMessage,
+    seqOverride?: number,
+    tsOverride?: number,
+  ): Promise<Record<string, unknown>> => {
+    const base = withCredential(msg, credential);
+    if (!signer || !credential) return base;
+    const seq = seqOverride ?? ++outboundSeq;
+    const timestamp = tsOverride ?? Date.now();
+    const canonical = canonicalMessageString(roomCode, credential.deviceId, seq, timestamp, msg);
+    return {
+      ...base,
+      [MESSAGE_SEQ_FIELD]: seq,
+      [MESSAGE_TIMESTAMP_FIELD]: timestamp,
+      [MESSAGE_SIGNATURE_FIELD]: await signer.sign(canonical),
+    };
+  };
+
   return {
     deviceId,
     sessionId,
     client,
     channel,
+    credential,
+    signer,
     presence: presenceState,
     messages,
+    rawMessages,
     waitForSubscribed: () => subscribed,
     async send(msg) {
-      const result = await channel.send({ type: "broadcast", event: "msg", payload: msg });
+      const payload = await signEnvelope(code, msg);
+      const result = await channel.send({ type: "broadcast", event: "msg", payload });
       if (result !== "ok") throw new Error(`broadcast failed: ${result}`);
     },
+    async sendRaw(payload) {
+      const result = await channel.send({ type: "broadcast", event: "msg", payload });
+      if (result !== "ok") throw new Error(`broadcast failed: ${result}`);
+    },
+    signEnvelope: (roomCode, msg, seq, timestamp) => signEnvelope(roomCode, msg, seq, timestamp),
     async track(meta) {
       await channel.track(meta);
     },
@@ -176,6 +282,30 @@ function connectPlayer(code: string, deviceId: string): PlayerConn {
       void client.removeChannel(channel);
     },
   };
+}
+
+/** POST /api/rooms/[code]/verify — batched certificate verification, as lib/realtime.ts uses it. */
+async function verifyCredentials(
+  code: string,
+  deviceId: string,
+  credentials: unknown[],
+): Promise<{ enforced?: boolean; results?: { deviceId: string; signature: string; valid: boolean }[] }> {
+  const res = await api<{ enforced?: boolean; results?: { deviceId: string; signature: string; valid: boolean }[] }>(
+    `/api/rooms/${code}/verify`,
+    { method: "POST", deviceId, body: JSON.stringify({ credentials }) },
+  );
+  if (res.status !== 200) throw new Error(`verify request failed: ${res.status}`);
+  return res.body;
+}
+
+/** Create a fresh room and return just its code — used by tests that don't need the owner cookie. */
+async function createRoomCode(): Promise<string> {
+  const created = await api<{ room: { code: string } }>("/api/rooms", {
+    method: "POST",
+    deviceId: `owner-${randomUUID()}`,
+  });
+  if (created.status !== 201) throw new Error(`room creation failed: ${created.status}`);
+  return created.body.room.code;
 }
 
 function presenceMeta(overrides: Partial<PresenceMeta> & { deviceId: string; sessionId: string }): PresenceMeta {
@@ -223,8 +353,10 @@ describe.skipIf(!HAVE_ENV)("multiplayer room lifecycle (real server + real Supab
       const ownerCookie = created.setCookie as string;
 
       // 2. Both clients subscribe to the room's Realtime channel and exchange presence.
-      const host = connectPlayer(code, hostDeviceId);
-      const guest = connectPlayer(code, guestDeviceId);
+      const [host, guest] = await Promise.all([
+        connectPlayer(code, hostDeviceId),
+        connectPlayer(code, guestDeviceId),
+      ]);
       conns.push(host, guest);
       await Promise.all([host.waitForSubscribed(), guest.waitForSubscribed()]);
 
@@ -366,4 +498,147 @@ describe.skipIf(!HAVE_ENV)("multiplayer room lifecycle (real server + real Supab
     },
     60_000,
   );
+});
+
+// ---------------------------------------------------------------------------------------------
+// Security regression tests — each of these targets a hole the certificate + per-message
+// signature design was specifically built to close (see the module doc in
+// lib/roomMessageAuth.ts). They exercise the same helpers lib/realtime.ts uses on the wire, not
+// a reimplementation, so a real regression in the app would fail these too.
+// ---------------------------------------------------------------------------------------------
+
+describe.skipIf(!HAVE_ENV)("room message auth (real server + real Supabase)", () => {
+  const conns: PlayerConn[] = [];
+
+  afterEach(() => {
+    for (const c of conns.splice(0)) c.close();
+  });
+
+  it("requires signing to be enforced on this deployment for the rest of the checks to be meaningful", async () => {
+    const code = await createRoomCode();
+    const victim = await connectPlayer(code, `victim-${randomUUID()}`);
+    conns.push(victim);
+    // If the deployment has no ROOM_MESSAGE_SECRET configured, /token returns enforced:false and
+    // credential is null — the security properties below don't apply. The e2e run instructions
+    // require ROOM_MESSAGE_SECRET to be set, so this should always be true; fail loudly if not.
+    expect(victim.credential, "ROOM_MESSAGE_SECRET must be configured for the e2e run").not.toBeNull();
+  });
+
+  it("rejects a message signed with the attacker's key but carrying the victim's valid certificate", async () => {
+    const code = await createRoomCode();
+    const victim = await connectPlayer(code, `victim-${randomUUID()}`);
+    const attacker = await connectPlayer(code, `attacker-${randomUUID()}`);
+    conns.push(victim, attacker);
+    await Promise.all([victim.waitForSubscribed(), attacker.waitForSubscribed()]);
+
+    expect(victim.credential).not.toBeNull();
+    expect(attacker.signer).not.toBeNull();
+
+    // Attacker forges a payload: victim's certificate (a valid, server-issued binding of victim's
+    // deviceId to victim's public key), but signs it with the attacker's OWN private key.
+    const forgedMsg: RoomMessage = { kind: "room_changed", version: "forged" };
+    const seq = 1;
+    const timestamp = Date.now();
+    const canonical = canonicalMessageString(code, victim.credential!.deviceId, seq, timestamp, forgedMsg);
+    const forgedPayload = {
+      ...forgedMsg,
+      __cred: victim.credential, // genuine certificate for the victim
+      [MESSAGE_SEQ_FIELD]: seq,
+      [MESSAGE_TIMESTAMP_FIELD]: timestamp,
+      [MESSAGE_SIGNATURE_FIELD]: await attacker.signer!.sign(canonical), // but attacker's signature
+    };
+
+    // The certificate itself checks out (it's genuine and issued to the victim for this room).
+    const verifyResult = await verifyCredentials(code, victim.deviceId, [victim.credential]);
+    expect(verifyResult.results?.[0]?.valid).toBe(true);
+
+    // But verifying the message signature against the CERTIFIED public key (the victim's, per
+    // the certificate) must fail, because it was actually signed by the attacker's key.
+    const victimKey = await importVerifyingKey(victim.credential!.publicKeyJwk);
+    expect(victimKey).not.toBeNull();
+    const sigOk = await verifyMessageSignature(
+      victimKey!,
+      canonical,
+      forgedPayload[MESSAGE_SIGNATURE_FIELD] as string,
+    );
+    expect(sigOk).toBe(false);
+  });
+
+  it("rejects a message whose body was modified after signing", async () => {
+    const code = await createRoomCode();
+    const sender = await connectPlayer(code, `sender-${randomUUID()}`);
+    conns.push(sender);
+    await sender.waitForSubscribed();
+    expect(sender.credential).not.toBeNull();
+
+    const original: RoomMessage = { kind: "room_changed", version: "v1" };
+    const seq = 1;
+    const timestamp = Date.now();
+    const envelope = await sender.signEnvelope(code, original, seq, timestamp);
+    const signature = envelope[MESSAGE_SIGNATURE_FIELD] as string;
+
+    const key = await importVerifyingKey(sender.credential!.publicKeyJwk);
+    expect(key).not.toBeNull();
+
+    // The original, unmodified message verifies fine against its own signature.
+    const canonicalOriginal = canonicalMessageString(code, sender.credential!.deviceId, seq, timestamp, original);
+    expect(await verifyMessageSignature(key!, canonicalOriginal, signature)).toBe(true);
+
+    // A receiver re-derives the canonical string from the (possibly tampered) body it actually
+    // received. Tamper with the body after signing, the way a compromised relay would, and the
+    // re-derived canonical string no longer matches what was signed.
+    const tamperedBody: RoomMessage = { kind: "room_changed", version: "v2-attacker-modified" };
+    const canonicalTampered = canonicalMessageString(code, sender.credential!.deviceId, seq, timestamp, tamperedBody);
+    expect(await verifyMessageSignature(key!, canonicalTampered, signature)).toBe(false);
+  });
+
+  it("refuses a replayed message (identical __seq) via the replay guard", async () => {
+    const guard = createReplayGuard();
+    const deviceId = `replay-${randomUUID()}`;
+    const now = Date.now();
+
+    expect(guard.accept(deviceId, 1, now)).toBe(true);
+    // Same seq again — a captured/rebroadcast message — must be refused even though the
+    // timestamp and signature would otherwise be valid.
+    expect(guard.accept(deviceId, 1, now)).toBe(false);
+    // A stale/out-of-order seq is refused too.
+    expect(guard.accept(deviceId, 1, now + 10)).toBe(false);
+    // Seq must strictly increase to be accepted.
+    expect(guard.accept(deviceId, 2, now + 10)).toBe(true);
+  });
+
+  it("rejects a certificate whose deviceId was altered after issuance", async () => {
+    const code = await createRoomCode();
+    const player = await connectPlayer(code, `player-${randomUUID()}`);
+    conns.push(player);
+    await player.waitForSubscribed();
+    expect(player.credential).not.toBeNull();
+
+    const forged: RoomCredential = { ...player.credential!, deviceId: `not-${player.deviceId}` };
+    const result = await verifyCredentials(code, player.deviceId, [forged]);
+    expect(result.results?.[0]?.valid).toBe(false);
+
+    // The untouched credential still verifies, proving the rejection above is specifically due
+    // to the deviceId tampering.
+    const control = await verifyCredentials(code, player.deviceId, [player.credential]);
+    expect(control.results?.[0]?.valid).toBe(true);
+  });
+
+  it("rejects a certificate replayed into a different room code", async () => {
+    const codeA = await createRoomCode();
+    const codeB = await createRoomCode();
+    const player = await connectPlayer(codeA, `player-${randomUUID()}`);
+    conns.push(player);
+    await player.waitForSubscribed();
+    expect(player.credential).not.toBeNull();
+
+    // The certificate was issued for room A. Presenting it to room B's /verify must fail, even
+    // though the signature itself is untouched — otherwise a token harvested in one room could
+    // be replayed to impersonate a device in another.
+    const crossRoom = await verifyCredentials(codeB, player.deviceId, [player.credential]);
+    expect(crossRoom.results?.[0]?.valid).toBe(false);
+
+    const sameRoom = await verifyCredentials(codeA, player.deviceId, [player.credential]);
+    expect(sameRoom.results?.[0]?.valid).toBe(true);
+  });
 });
