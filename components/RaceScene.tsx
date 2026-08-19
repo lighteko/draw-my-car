@@ -504,7 +504,7 @@ export function RaceScene({
                 />
               </Suspense>
               {!freeDrive && (
-                <DirectionArrow bodyRef={chassisRef} targets={arrowTargets} accent={track.accent} />
+                <DirectionArrow bodyRef={chassisRef} targets={arrowTargets} />
               )}
               {!freeDrive && (
                 <LapTracker
@@ -1064,17 +1064,17 @@ function AdminTeleporter({
  * With the gates themselves invisible, this is what tells a player where to go. Its heading is
  * the weighted sum of the unit directions to the next few gates, so it reads as "the way the
  * track goes" rather than "that post right there" and stops flicking as gates are passed. The
- * shape is a flat unlit chevron lying in the ground plane — no shading, no depth to it.
+ * shape is a flat unlit chevron lying in the ground plane — no shading, no depth to it. It is
+ * white rather than the track accent: the accent is a sand tone on a sand-coloured desert map,
+ * so it disappeared into the road exactly where it was needed.
  */
 function DirectionArrow({
   bodyRef,
   targets,
-  accent,
 }: {
   bodyRef: RefObject<RapierRigidBody | null>;
   /** The next few gate positions, nearest first. */
   targets: Vec3[];
-  accent: string;
 }) {
   const group = useRef<THREE.Group>(null);
 
@@ -1138,11 +1138,11 @@ function DirectionArrow({
       {/* Backing plate, a hair below and larger, so the chevron keeps its edge on any map. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} scale={1.18}>
         <shapeGeometry args={[shape]} />
-        <meshBasicMaterial color="#0b1220" transparent opacity={0.55} side={THREE.DoubleSide} depthWrite={false} />
+        <meshBasicMaterial color="#120d09" transparent opacity={0.7} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]}>
         <shapeGeometry args={[shape]} />
-        <meshBasicMaterial color={accent} side={THREE.DoubleSide} toneMapped={false} depthWrite={false} />
+        <meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} toneMapped={false} depthWrite={false} />
       </mesh>
     </group>
   );

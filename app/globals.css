@@ -29,6 +29,27 @@ body {
   font-family: var(--font-sans-kr), "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   overscroll-behavior: none; /* no rubber-band scroll on mobile */
   -webkit-tap-highlight-color: transparent;
+  /* Holding a steering button is a hold, not a text selection. Without this a long press on
+     mobile raises the selection handles and the iOS callout menu mid-corner, and a dragged
+     finger paints the HUD blue. Fields opt back in below. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Long-pressing a car thumbnail should not offer to save or drag the image. */
+img,
+canvas {
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
 }
 
 /* No scrollbars anywhere — this is a game, not a document. Everything still scrolls; the
