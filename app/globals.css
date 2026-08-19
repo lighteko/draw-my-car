@@ -268,8 +268,19 @@ body {
   bottom: max(1.25rem, env(safe-area-inset-bottom));
 }
 
+/* Tilt toggle: top-centre, deliberately outside both thumb arcs. It is set once, and the
+   bottom corners belong to the controls you hold while driving. */
 .touch-tools {
-  bottom: max(0.5rem, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  top: max(0.5rem, env(safe-area-inset-top));
+}
+
+/* Reset: inside the right thumb's reach, stacked above the pedals rather than at the
+   centre of the screen, which in landscape is the furthest point from either hand. */
+.touch-reset {
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: calc(max(1.25rem, env(safe-area-inset-bottom)) + 5.5rem);
 }
 
 /* Race speedometer: bottom-right on desktop; centred above the touch tool row
@@ -698,12 +709,17 @@ body {
   }
 
   .touch-tools {
-    bottom: max(0.35rem, env(safe-area-inset-bottom));
+    top: max(0.35rem, env(safe-area-inset-top));
     gap: 0.4rem;
   }
 
   .touch-tools button {
     padding: 0.45rem 0.75rem;
+  }
+
+  .touch-reset {
+    right: max(0.7rem, env(safe-area-inset-right));
+    bottom: calc(max(0.7rem, env(safe-area-inset-bottom)) + 5rem);
   }
 
   .touch-hold {
@@ -716,6 +732,12 @@ body {
   .race-exit {
     left: max(0.7rem, env(safe-area-inset-left));
     top: max(0.7rem, env(safe-area-inset-top));
+  }
+
+  /* Clears the exit button now that both are a full touch target tall. */
+  .race-mute {
+    left: max(0.7rem, env(safe-area-inset-left));
+    top: calc(max(0.7rem, env(safe-area-inset-top)) + 3.25rem);
   }
 
   .sim-car-label,

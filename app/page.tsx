@@ -242,7 +242,7 @@ function ProfileChip({ username, onEdit }: { username: string; onEdit: () => voi
     <button
       type="button"
       onClick={onEdit}
-      className="game-panel flex items-center gap-2.5 rounded-full py-1.5 pl-1.5 pr-3 transition hover:border-amber-400/50"
+      className="game-panel touch-target flex items-center gap-2.5 rounded-full py-1.5 pl-1.5 pr-3 transition hover:border-amber-400/50"
     >
       <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-600 font-heading text-sm font-bold text-[#2a1608]">
         {initial}

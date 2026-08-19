@@ -660,7 +660,10 @@ export function Lobby({
               {cars.length === 0 ? (
                 <div className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
                     <div className="text-sm font-medium text-white">기본 차량으로 참가합니다</div>
-                    <Link href="/" className="mt-0.5 block text-xs text-amber-400 underline">
+                    <Link
+                      href="/"
+                      className="touch-target -mx-1 mt-0.5 flex items-center px-1 text-xs text-amber-400 underline"
+                    >
                       차고에서 내 차를 만들 수도 있어요
                     </Link>
                   </div>

@@ -115,7 +115,7 @@ export function RaceHud({
         <button
           type="button"
           onClick={onExit}
-          className="race-exit absolute left-4 top-4 z-10 rounded-md bg-black/45 px-3 py-1.5 font-mono text-xs text-white backdrop-blur transition hover:bg-black/65"
+          className="race-exit touch-target absolute left-4 top-4 z-10 flex items-center rounded-md bg-black/45 px-3 py-1.5 font-mono text-xs text-white backdrop-blur transition hover:bg-black/65"
         >
           ← 나가기
         </button>
@@ -127,7 +127,7 @@ export function RaceHud({
           onClick={onToggleMuted}
           aria-pressed={muted}
           aria-label={muted ? "소리 켜기" : "소리 끄기"}
-          className="race-mute absolute left-4 top-14 z-10 rounded-md bg-black/45 px-2.5 py-1.5 font-mono text-xs text-white backdrop-blur transition hover:bg-black/65"
+          className="race-mute touch-target absolute left-4 top-14 z-10 flex items-center justify-center rounded-md bg-black/45 px-2.5 py-1.5 font-mono text-xs text-white backdrop-blur transition hover:bg-black/65"
         >
           {muted ? "🔇" : "🔊"}
         </button>
@@ -265,7 +265,7 @@ export function RaceHud({
                   <li
                     key={i}
                     className={`flex justify-between ${
-                      isBest ? "font-bold text-emerald-400" : "text-neutral-300"
+                      isBest ? "font-bold text-emerald-400" : "text-[#d9c193]/80"
                     }`}
                   >
                     <span>

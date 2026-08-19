@@ -180,7 +180,7 @@ export function CreateCarModal({
                     style={{ width: `${Math.round((progress ?? 0.08) * 100)}%` }}
                   />
                 </div>
-                <p className="mt-2 text-xs text-neutral-400">
+                <p className="mt-2 text-xs text-[#d9c193]/70">
                   1분 정도 걸릴 수 있어요 — 그림이 진짜 3D 모델로 바뀌는 중입니다.
                 </p>
               </div>

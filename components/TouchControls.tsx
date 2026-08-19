@@ -161,22 +161,26 @@ export function TouchControls() {
         </HoldButton>
       </div>
 
-      {/* Scheme toggle + reset + recenter */}
-      <div className="touch-tools absolute left-1/2 flex -translate-x-1/2 gap-2">
+      {/* Reset sits in the right thumb's arc, just above the pedals: it is the one control
+          you reach for mid-panic, and the middle of the screen is the furthest point from
+          either thumb in landscape. */}
+      <button
+        type="button"
+        aria-label="차량 리셋"
+        onPointerDown={() => setTouchInput({ reset: true })}
+        onPointerUp={() => setTouchInput({ reset: false })}
+        onPointerCancel={() => setTouchInput({ reset: false })}
+        className="touch-reset pointer-events-auto absolute flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-black/55 text-xl text-white backdrop-blur active:bg-black/75"
+      >
+        ⟲
+      </button>
+
+      {/* Tilt is chosen once and then left alone, so it lives out of the driving zone. */}
+      <div className="touch-tools absolute flex gap-2">
         <PillButton onClick={toggleScheme}>{scheme === "gui" ? "기울기: 꺼짐" : "기울기: 켜짐"}</PillButton>
         {scheme === "tilt" && (
-          <PillButton onClick={() => (neutralRef.current = null)}>Recenter</PillButton>
+          <PillButton onClick={() => (neutralRef.current = null)}>중심 재설정</PillButton>
         )}
-        <button
-          type="button"
-          aria-label="차량 리셋"
-          onPointerDown={() => setTouchInput({ reset: true })}
-          onPointerUp={() => setTouchInput({ reset: false })}
-          onPointerCancel={() => setTouchInput({ reset: false })}
-          className="pointer-events-auto rounded-full border border-white/15 bg-black/50 px-4 py-2 text-sm text-white backdrop-blur"
-        >
-          ⟲
-        </button>
       </div>
     </div>
   );
@@ -187,7 +191,7 @@ function PillButton({ onClick, children }: { onClick: () => void; children: Reac
     <button
       type="button"
       onClick={onClick}
-      className="pointer-events-auto rounded-full border border-white/15 bg-black/50 px-4 py-2 text-xs font-medium text-white backdrop-blur"
+      className="touch-target pointer-events-auto flex items-center rounded-full border border-white/15 bg-black/50 px-4 py-2 text-xs font-medium text-white backdrop-blur active:bg-black/70"
     >
       {children}
     </button>

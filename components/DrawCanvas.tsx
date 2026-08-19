@@ -147,7 +147,7 @@ export function DrawCanvas({
           <input type="file" accept="image/*" onChange={onUpload} className="hidden" />
         </label>
 
-        <label className="flex items-center gap-2 text-neutral-500">
+        <label className="flex items-center gap-2 text-[#d9c193]/55">
           붓 굵기
           <input
             type="range"
@@ -158,7 +158,7 @@ export function DrawCanvas({
           />
         </label>
 
-        <span className="draw-status ml-auto text-xs text-neutral-400">
+        <span className="draw-status ml-auto text-xs text-[#d9c193]/70">
           {hasContent ? "생성할 준비 완료" : "차를 그리거나 이미지를 올리세요"}
         </span>
       </div>
