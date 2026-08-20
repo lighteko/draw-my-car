@@ -55,7 +55,7 @@ interface SenderVerifier {
   dispose(): void;
 }
 
-function createSenderVerifier(code: string): SenderVerifier {
+function createSenderVerifier(code: string, onEnforcementOff: () => void): SenderVerifier {
   const decided = new Map<string, boolean>();
   const queued = new Map<string, RoomCredential>();
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -82,6 +82,7 @@ function createSenderVerifier(code: string): SenderVerifier {
       if ((body as { enforced?: unknown }).enforced === false) {
         enforced = false;
         queued.clear();
+        onEnforcementOff();
         return;
       }
       if (!Array.isArray(body.results)) return;
@@ -153,13 +154,34 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
     handlers.onPresence(members);
   });
 
-  const verifier = createSenderVerifier(code);
+  const verifier: SenderVerifier = createSenderVerifier(code, () => setEnforcement(false));
 
   /**
-   * Authenticate before parsing intent: an unsigned payload, one signed for another room or
-   * expired, or one whose signed device disagrees with the device it claims to be, is dropped
-   * outright. Dropping (rather than queuing) is what makes the first message from an
-   * unverified sender safe — by the time the answer arrives, that message is gone.
+   * Whether this deployment signs messages at all, as the server told us. `null` means we have
+   * not heard yet.
+   *
+   * Signing is opt-in, so on most deployments nobody can produce a credential and every payload
+   * is unsigned. Requiring one regardless is a total blackout, not a degraded mode: presence
+   * still populates the lobby and the ghost cars still spawn, but no transform and no progress
+   * ever reaches a handler — every other car sits on the start line forever and you are always
+   * first, because nobody else's lap ever arrives.
+   *
+   * Unsigned payloads are therefore accepted only once the server has explicitly said signing
+   * is off. While the answer is outstanding we still drop them, so the few hundred milliseconds
+   * before /token replies are not an injection window on deployments that do enforce.
+   */
+  let signingEnforced: boolean | null = null;
+  const setEnforcement = (on: boolean): void => {
+    signingEnforced = on;
+    if (!on) verifier.disableEnforcement();
+  };
+
+  /**
+   * Authenticate before parsing intent: where signing is enforced, a payload that is unsigned,
+   * signed for another room, expired, or whose signed device disagrees with the device it
+   * claims to be is dropped outright. Dropping (rather than queuing) is what makes the first
+   * message from an unverified sender safe — by the time the answer arrives, that message is
+   * gone.
    */
   // Certified keys, imported once per sender. Importing is the only expensive step; the
   // per-message verify that follows is local and needs no network.
@@ -175,7 +197,7 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
    */
   const authenticate = async (payload: unknown, lane: MessageLane): Promise<RoomMessage | null> => {
     const { message, credential } = splitCredential(payload);
-    if (!credential) return null;
+    if (!credential) return signingEnforced === false ? parseRoomMessage(message) : null;
     if (!isCredentialConsistent(credential, message, code)) return null;
     if (!verifier.isVerified(credential)) return null;
     const parsed = parseRoomMessage(message);
@@ -248,7 +270,7 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
     // No Web Crypto here (an insecure origin, typically a phone on the LAN dev server). We
     // cannot sign, and we equally cannot verify anyone else, so requiring signatures would
     // only blind us. Drop enforcement rather than sit in an empty room.
-    if (!signer) verifier.disableEnforcement();
+    if (!signer) setEnforcement(false);
     return signer;
   };
 
@@ -297,10 +319,11 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
       // Signing is not configured on this deployment: nobody can produce a credential, so
       // requiring one would silently drop every peer. Attribution is off; the room works.
       if (body.enforced === false) {
-        verifier.disableEnforcement();
+        setEnforcement(false);
         return;
       }
       const issued = parseRoomCredential(body);
+      if (issued) setEnforcement(true);
       if (!left) credential = issued;
     } catch {
       /* retried on the next send */
