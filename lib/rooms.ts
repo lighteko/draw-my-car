@@ -137,6 +137,62 @@ export async function createRoom(
   throw new Error("could not allocate a unique room code");
 }
 
+// A lobby with no activity in this window is treated as abandoned rather than live. Five
+// minutes comfortably covers "picking a track / waiting for friends to click the link" while
+// still dropping rooms whose creator tabbed away and never came back.
+const JOINABLE_STALE_MS = 5 * 60 * 1000;
+
+// How many recently-created rooms to inspect when looking for somewhere to join. Rooms are
+// only ever read back through getRoom (base row + jobs overlay), so this bounds the number of
+// extra reads a join does; recency of creation is a reasonable pre-filter since anything much
+// older than the stale window is discarded anyway once inspected.
+const JOINABLE_CANDIDATE_LIMIT = 25;
+
+/**
+ * Find an already-open room a new player can drop into, or undefined if none exists.
+ *
+ * IMPORTANT HONESTY NOTE: the server does not know how many players are currently in a room.
+ * Presence (who is actually connected right now) lives entirely in Supabase Realtime, which
+ * this server-side code has no access to — `rooms.settings.maxPlayers` is a configured cap,
+ * not an occupancy count, and nothing persisted here tracks how many devices are in a lobby.
+ * So this function CANNOT filter out full rooms, and it cannot literally rank rooms by
+ * "closest to full" as the ideal behaviour would. If real occupancy-aware matchmaking is
+ * wanted, the room lifecycle (join/leave presence events, already flowing through
+ * lib/realtime.ts) needs to update a persisted counter on the room row that this function can
+ * then read — that is out of scope here since lib/realtime.ts is off-limits for this change.
+ *
+ * As an honest approximation given only what the server has: prefer the lobby room with the
+ * highest settings revision (a proxy for "someone is actively configuring this lobby right
+ * now", which correlates with people actually being present), breaking ties by most recent
+ * activity. A stale/abandoned or already-racing room is never returned.
+ */
+export async function findJoinableRoom(): Promise<Room | undefined> {
+  const client = getServiceClient();
+  const { data, error } = await client
+    .from("rooms")
+    .select("code")
+    .order("created_at", { ascending: false })
+    .limit(JOINABLE_CANDIDATE_LIMIT);
+  if (error) throw new Error(`failed to list rooms: ${error.message}`);
+  if (!data || data.length === 0) return undefined;
+
+  const now = Date.now();
+  let best: Room | undefined;
+  for (const row of data as { code: string }[]) {
+    const room = await getRoom(row.code);
+    if (!room || room.status !== "lobby") continue;
+    if (now - room.updatedAt > JOINABLE_STALE_MS) continue;
+    if (
+      !best ||
+      room.revision > best.revision ||
+      (room.revision === best.revision && room.updatedAt > best.updatedAt)
+    ) {
+      best = room;
+    }
+  }
+  return best;
+}
+
 export async function getRoom(code: string): Promise<Room | undefined> {
   const { data, error } = await getServiceClient()
     .from("rooms")

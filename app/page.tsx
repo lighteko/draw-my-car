@@ -73,7 +73,7 @@ export default function Home() {
     setCreatingRoom(true);
     if (isTouchDevice()) await enterFullscreen();
     try {
-      const { room } = await apiPost<{ room: { code: string } }>("/api/rooms");
+      const { room } = await apiPost<{ room: { code: string } }>("/api/rooms/join");
       router.push(`/r/${room.code}`);
     } catch {
       setCreatingRoom(false);
@@ -145,7 +145,7 @@ export default function Home() {
                   disabled={creatingRoom}
                   className="btn-ghost px-4 py-2 text-xs"
                 >
-                  {creatingRoom ? "방 만드는 중…" : "기본 차량으로 방 만들기"}
+                  {creatingRoom ? "방 찾는 중…" : "기본 차량으로 참가하기"}
                 </button>
               )}
             </div>
@@ -189,13 +189,13 @@ export default function Home() {
             disabled={!canPlay || creatingRoom}
             title={
               multiplayer
-                ? "방을 만들고 친구를 초대합니다"
+                ? "열려 있는 방이 있으면 참가하고, 없으면 새로 만듭니다"
                 : "멀티플레이는 Supabase 설정이 필요합니다"
             }
             className="btn-race w-64 max-w-[80vw] px-10 py-4 text-lg"
           >
             {creatingRoom ? (
-              "방 만드는 중…"
+              "방 찾는 중…"
             ) : (
               <>
                 <span aria-hidden>▶</span> 플레이

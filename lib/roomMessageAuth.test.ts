@@ -5,6 +5,7 @@ import {
   canonicalMessageString,
   createMessageSigner,
   createReplayGuard,
+  createSenderGate,
   importVerifyingKey,
   stableStringify,
   verifyMessageSignature,
@@ -299,5 +300,63 @@ describe("lane binding", () => {
 
   it("gives each lane its own replay slot", () => {
     expect(replayKey("d1", "control")).not.toBe(replayKey("d1", "telemetry"));
+  });
+});
+
+describe("createSenderGate", () => {
+  const cert = (signature: string): RoomCredential => ({
+    deviceId: "peer",
+    roomCode: "abcd",
+    issuedAt: NOW,
+    expiresAt: NOW + CREDENTIAL_TTL_MS,
+    publicKeyJwk: KEY,
+    signature,
+  });
+
+  it("lets a peer back in after it rejoins and its sequence restarts", () => {
+    // The bug this encodes: walking from the lobby into the race, refreshing, or a reconnect
+    // all mint a new certificate and restart the sequence at 1. Keyed by device alone the
+    // receiver kept the old high-water mark and the peer's car froze for the rest of the race.
+    const gate = createSenderGate();
+    const first = cert("cert-session-1");
+    expect(gate.accept(first, "telemetry", 900, NOW + 1000)).toBe(true);
+
+    const rejoined = cert("cert-session-2");
+    expect(gate.accept(rejoined, "telemetry", 1, NOW + 2000)).toBe(true);
+    expect(gate.accept(rejoined, "telemetry", 2, NOW + 2100)).toBe(true);
+  });
+
+  it("still refuses a replay carrying the certificate it was captured with", () => {
+    const gate = createSenderGate();
+    const session = cert("cert-session-1");
+    expect(gate.accept(session, "control", 5, NOW + 1000)).toBe(true);
+    expect(gate.accept(session, "control", 5, NOW + 1000)).toBe(false);
+    expect(gate.accept(session, "control", 4, NOW + 900)).toBe(false);
+  });
+
+  it("does not let one lane's sequence starve the other", () => {
+    const gate = createSenderGate();
+    const session = cert("cert-session-1");
+    expect(gate.accept(session, "telemetry", 40, NOW + 1000)).toBe(true);
+    expect(gate.accept(session, "control", 3, NOW + 1000)).toBe(true);
+  });
+
+  it("judges freshness by the certificate window, not the receiver's clock", () => {
+    // Two devices can disagree by minutes. Comparing against the local wall clock discarded
+    // every message in one direction and the other player simply never appeared.
+    const gate = createSenderGate();
+    const session = cert("cert-session-1");
+    // Sender's clock reads hours ahead of ours but still inside what the server signed.
+    expect(gate.accept(session, "control", 1, NOW + 5 * 60 * 60 * 1000)).toBe(true);
+    // Outside the signed window it is refused regardless of any local clock.
+    expect(gate.accept(session, "control", 2, NOW + CREDENTIAL_TTL_MS + 1)).toBe(false);
+    expect(gate.accept(session, "control", 3, NOW - 1)).toBe(false);
+  });
+
+  it("refuses a message spliced in from an older capture of the same session", () => {
+    const gate = createSenderGate();
+    const session = cert("cert-session-1");
+    expect(gate.accept(session, "control", 10, NOW + 5000)).toBe(true);
+    expect(gate.accept(session, "control", 11, NOW + 1000)).toBe(false);
   });
 });

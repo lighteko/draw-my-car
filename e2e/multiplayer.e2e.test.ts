@@ -515,13 +515,24 @@ describe.skipIf(!HAVE_ENV)("room message auth (real server + real Supabase)", ()
   });
 
   it("requires signing to be enforced on this deployment for the rest of the checks to be meaningful", async () => {
+    // Enforcement is off by default outside production, because signing needs crypto.subtle
+    // and a phone on a LAN dev server (plain http) does not have it — leaving it on there
+    // silently blackholes that player. These checks therefore need it switched on explicitly:
+    //
+    //   ROOM_MESSAGE_ENFORCE=1 npm run dev      (in the server's terminal)
+    //
+    // Failing loudly beats skipping: a green run that verified nothing is worse than a red one.
     const code = await createRoomCode();
-    const victim = await connectPlayer(code, `victim-${randomUUID()}`);
-    conns.push(victim);
-    // If the deployment has no ROOM_MESSAGE_SECRET configured, /token returns enforced:false and
-    // credential is null — the security properties below don't apply. The e2e run instructions
-    // require ROOM_MESSAGE_SECRET to be set, so this should always be true; fail loudly if not.
-    expect(victim.credential, "ROOM_MESSAGE_SECRET must be configured for the e2e run").not.toBeNull();
+    const res = await fetch(`${BASE_URL}/api/rooms/${code}/token`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-device-id": "enforcement-probe" },
+      body: JSON.stringify({ publicKeyJwk: "{}" }),
+    });
+    const body = (await res.json()) as { enforced?: boolean };
+    expect(
+      body.enforced,
+      "server reports signing disabled — restart it with ROOM_MESSAGE_ENFORCE=1 to run the auth checks",
+    ).toBe(true);
   });
 
   it("rejects a message signed with the attacker's key but carrying the victim's valid certificate", async () => {

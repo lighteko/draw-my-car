@@ -96,9 +96,23 @@ export function getRoomMessageSecret(): string | null {
   return configured && configured.length > 0 ? configured : null;
 }
 
-/** Whether message signing is switched on for this deployment. */
+/**
+ * Whether message signing is switched on for this deployment.
+ *
+ * Signing needs `crypto.subtle`, which browsers only expose in a secure context — HTTPS or
+ * localhost. A phone opening the dev server over a LAN address (http://192.168.x.x) therefore
+ * cannot sign anything, and every peer that CAN sign drops all of its traffic: the phone's car
+ * never appears and it drives alone. That failure is silent and looks exactly like a game bug.
+ *
+ * So enforcement is on in production, where the app is served over HTTPS and every client can
+ * hold up its end, and off in development unless explicitly asked for. Set
+ * ROOM_MESSAGE_ENFORCE=1 to exercise it locally over HTTPS or localhost only.
+ */
 export function isRoomMessageAuthConfigured(): boolean {
-  return getRoomMessageSecret() !== null;
+  if (getRoomMessageSecret() === null) return false;
+  if (process.env.ROOM_MESSAGE_ENFORCE === "1") return true;
+  if (process.env.ROOM_MESSAGE_ENFORCE === "0") return false;
+  return process.env.NODE_ENV === "production";
 }
 
 // --- signing / verifying (server only) ---
@@ -403,6 +417,65 @@ export async function verifyMessageSignature(
   } catch {
     return false;
   }
+}
+
+/**
+ * Decides whether to accept a message from a peer, given its certificate, lane, sequence and
+ * timestamp.
+ *
+ * Two things this has to get right, because getting either wrong locks a player out of the
+ * race permanently rather than dropping a frame:
+ *
+ * 1. A slot is per CERTIFICATE, not per device. Sequence numbers restart at 1 every time a
+ *    client joins the channel — a refresh, a reconnect, walking from the lobby into the race.
+ *    Keyed by device alone, the receiver still held that sender's old high-water mark and
+ *    refused everything the new session sent, forever: the other car froze and never came
+ *    back. A rejoin mints a fresh keypair and certificate, so the certificate is exactly the
+ *    session boundary we need. A genuinely replayed message still carries the OLD certificate
+ *    and lands in the old slot, where its sequence has already been used.
+ *
+ * 2. Freshness is judged against the sender's own stream and its certificate window, never
+ *    against the receiver's wall clock. Two phones can disagree by minutes; comparing to
+ *    `Date.now()` here meant a modest clock skew silently discarded every message in one
+ *    direction. The certificate already bounds how long a capture stays useful.
+ */
+export function createSenderGate(): {
+  accept(
+    credential: RoomCredential,
+    lane: MessageLane,
+    seq: number,
+    timestamp: number,
+  ): boolean;
+} {
+  // Bounded so a peer cycling certificates cannot grow this without limit.
+  const MAX_SLOTS = 256;
+  const slots = new Map<string, { seq: number; timestamp: number }>();
+
+  return {
+    accept(credential, lane, seq, timestamp) {
+      if (!Number.isFinite(seq) || !Number.isFinite(timestamp)) return false;
+      // Outside the window the server vouched for, the certificate is worthless.
+      if (timestamp < credential.issuedAt || timestamp >= credential.expiresAt) return false;
+
+      const key = `${credential.deviceId} ${lane} ${credential.signature}`;
+      const previous = slots.get(key);
+      if (previous) {
+        if (seq <= previous.seq) return false;
+        // Timestamps from one sender only move forward; a splice from an older capture does not.
+        if (timestamp < previous.timestamp) return false;
+      } else {
+        // New session for this device+lane: retire the old one so it cannot be resumed, and
+        // so the map does not accumulate a slot per reconnect.
+        const stale = `${credential.deviceId} ${lane} `;
+        for (const existing of slots.keys()) {
+          if (existing.startsWith(stale)) slots.delete(existing);
+        }
+        if (slots.size >= MAX_SLOTS) slots.clear();
+      }
+      slots.set(key, { seq, timestamp });
+      return true;
+    },
+  };
 }
 
 /**

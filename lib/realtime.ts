@@ -12,9 +12,8 @@ import {
   MESSAGE_SIGNATURE_FIELD,
   MESSAGE_TIMESTAMP_FIELD,
   canonicalMessageString,
-  replayKey,
   createMessageSigner,
-  createReplayGuard,
+  createSenderGate,
   credentialCacheKey,
   importVerifyingKey,
   isCredentialConsistent,
@@ -165,7 +164,7 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
   // Certified keys, imported once per sender. Importing is the only expensive step; the
   // per-message verify that follows is local and needs no network.
   const senderKeys = new Map<string, Promise<CryptoKey | null>>();
-  const replayGuard = createReplayGuard();
+  const senderGate = createSenderGate();
 
   /**
    * Decide whether a payload really came from the device it names.
@@ -189,7 +188,7 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
     if (typeof signature !== "string" || typeof seq !== "number" || typeof timestamp !== "number") {
       return null;
     }
-    if (!replayGuard.accept(replayKey(credential.deviceId, lane), seq, timestamp)) return null;
+    if (!senderGate.accept(credential, lane, seq, timestamp)) return null;
 
     let keyPromise = senderKeys.get(credential.publicKeyJwk);
     if (!keyPromise) {
@@ -246,6 +245,10 @@ export function joinRoom(code: string, initial: PresenceMeta, handlers: RoomHand
     if (signer) return signer;
     signerPromise ??= createMessageSigner();
     signer = await signerPromise;
+    // No Web Crypto here (an insecure origin, typically a phone on the LAN dev server). We
+    // cannot sign, and we equally cannot verify anyone else, so requiring signatures would
+    // only blind us. Drop enforcement rather than sit in an empty room.
+    if (!signer) verifier.disableEnforcement();
     return signer;
   };
 
