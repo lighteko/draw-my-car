@@ -33,6 +33,9 @@ import { collapsePresence, createPresenceSessionId } from "@/lib/presence";
 
 const ACTIVE_CAR_KEY = "dmc_active_car";
 
+/** Well inside the window the room browser uses to decide a host has gone quiet. */
+const OCCUPANCY_REPORT_MS = 15_000;
+
 /**
  * Lobby — presence roster + owner race settings + share (link/QR), all over one Realtime
  * channel. The owner is the only one who can edit settings; changes broadcast live and are
@@ -265,6 +268,26 @@ export function Lobby({
   useEffect(() => {
     handleRef.current?.updatePresence(myMeta);
   }, [myMeta]);
+
+  // The host is the only client that can see the roster, and the server needs it to advertise
+  // this room on /rooms. Reported on a timer as well as on change, because the browser ages a
+  // room out when its host goes quiet — that is how an abandoned lobby disappears.
+  useEffect(() => {
+    if (!isOwner || room.status !== "lobby") return;
+    let cancelled = false;
+    const report = () => {
+      if (cancelled) return;
+      void apiPost(`/api/rooms/${code}/occupancy`, {
+        players: visibleMembers.length,
+      }).catch(() => {});
+    };
+    report();
+    const id = setInterval(report, OCCUPANCY_REPORT_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [code, isOwner, room.status, visibleMembers.length]);
 
   // Persist the chosen role so the race page knows whether to spectate.
   useEffect(() => {

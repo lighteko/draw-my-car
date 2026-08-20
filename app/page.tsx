@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { usePlayer } from "@/lib/identity";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet } from "@/lib/api";
 import { hasBrowserSupabase } from "@/lib/supabase-browser";
 import { enterFullscreen, isTouchDevice, useAutoFullscreen } from "@/lib/fullscreen";
 import type { Car } from "@/lib/cars";
@@ -31,7 +31,7 @@ export default function Home() {
   const [index, setIndex] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingName, setEditingName] = useState(false);
-  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [openingRooms, setOpeningRooms] = useState(false);
 
   useEffect(() => {
     if (!ready) return;
@@ -69,15 +69,11 @@ export default function Home() {
   // No car is fine — the race falls back to the placeholder rig. Only Supabase gates hosting.
   const canPlay = multiplayer;
 
+  // Browsing beats being teleported: the player picks a room (or makes one) on /rooms.
   const play = useCallback(async () => {
-    setCreatingRoom(true);
+    setOpeningRooms(true);
     if (isTouchDevice()) await enterFullscreen();
-    try {
-      const { room } = await apiPost<{ room: { code: string } }>("/api/rooms/join");
-      router.push(`/r/${room.code}`);
-    } catch {
-      setCreatingRoom(false);
-    }
+    router.push("/rooms");
   }, [router]);
 
   return (
@@ -142,10 +138,10 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={play}
-                  disabled={creatingRoom}
+                  disabled={openingRooms}
                   className="btn-ghost px-4 py-2 text-xs"
                 >
-                  {creatingRoom ? "방 찾는 중…" : "기본 차량으로 참가하기"}
+                  {openingRooms ? "여는 중…" : "기본 차량으로 함께 하기"}
                 </button>
               )}
             </div>
@@ -186,7 +182,7 @@ export default function Home() {
           <button
             type="button"
             onClick={play}
-            disabled={!canPlay || creatingRoom}
+            disabled={!canPlay || openingRooms}
             title={
               multiplayer
                 ? "열려 있는 방이 있으면 참가하고, 없으면 새로 만듭니다"
@@ -194,8 +190,8 @@ export default function Home() {
             }
             className="btn-race w-64 max-w-[80vw] px-10 py-4 text-lg"
           >
-            {creatingRoom ? (
-              "방 찾는 중…"
+            {openingRooms ? (
+              "여는 중…"
             ) : (
               <>
                 <span aria-hidden>▶</span> 플레이

@@ -16,6 +16,8 @@ export interface Room {
   status: RoomStatus;
   settings: RaceSettings;
   race: RaceSnapshot | null;
+  /** Player count last reported by the host, or null if it never reported. */
+  occupancy: RoomOccupancy | null;
   /** Monotonic mutation revision persisted inside settings JSON. */
   revision: number;
   version: string;
@@ -31,6 +33,7 @@ interface StoredRoomMeta {
   ownerTokenHash?: string;
   race?: RaceSnapshot | null;
   revision?: number;
+  occupancy?: RoomOccupancy | null;
 }
 
 type StoredSettings = RaceSettings & { __room?: StoredRoomMeta };
@@ -69,6 +72,7 @@ function rowToRoom(r: RoomRow): Room {
     status: r.status,
     settings,
     race: parseRaceSnapshot(meta?.race) ?? null,
+    occupancy: parseOccupancy(meta?.occupancy),
     revision:
       Number.isInteger(meta?.revision) && (meta?.revision as number) >= 0
         ? (meta?.revision as number)
@@ -83,6 +87,23 @@ function rowToRoom(r: RoomRow): Room {
   };
 }
 
+/**
+ * How many people are actually in a room, as last reported by its host.
+ *
+ * The server cannot see this for itself: membership lives in Supabase Realtime presence, which
+ * only connected clients can read. Rather than guess, the host — which already has the roster
+ * on screen — reports it. One writer means no read-modify-write races over the JSON blob, and
+ * a room whose host has gone quiet simply ages out of the browser, which is the behaviour we
+ * wanted anyway.
+ */
+function parseOccupancy(value: unknown): RoomOccupancy | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { players, at } = value as { players?: unknown; at?: unknown };
+  if (!Number.isInteger(players) || (players as number) < 0) return null;
+  if (!Number.isFinite(at)) return null;
+  return { players: players as number, at: at as number };
+}
+
 function storedSettings(
   room: Room,
   settings: RaceSettings,
@@ -95,8 +116,15 @@ function storedSettings(
       ...(room.ownerTokenHash ? { ownerTokenHash: room.ownerTokenHash } : {}),
       race,
       revision,
+      occupancy: room.occupancy,
     },
   };
+}
+
+export interface RoomOccupancy {
+  players: number;
+  /** Epoch ms of the report, so a silent host's count can be aged out. */
+  at: number;
 }
 
 export function publicRoom(room: Room): PublicRoom {
@@ -137,60 +165,79 @@ export async function createRoom(
   throw new Error("could not allocate a unique room code");
 }
 
-// A lobby with no activity in this window is treated as abandoned rather than live. Five
-// minutes comfortably covers "picking a track / waiting for friends to click the link" while
-// still dropping rooms whose creator tabbed away and never came back.
-const JOINABLE_STALE_MS = 5 * 60 * 1000;
+// Hosts report their roster on a short timer, so a report older than this means the host's tab
+// is gone (closed, slept, or offline) and the room should stop being advertised. Kept a few
+// times the report interval so one dropped request does not flicker a live room off the list.
+const OCCUPANCY_STALE_MS = 45 * 1000;
 
-// How many recently-created rooms to inspect when looking for somewhere to join. Rooms are
-// only ever read back through getRoom (base row + jobs overlay), so this bounds the number of
-// extra reads a join does; recency of creation is a reasonable pre-filter since anything much
-// older than the stale window is discarded anyway once inspected.
+// How many recent lobbies to inspect when building the list. Each is read back through
+// getRoom (base row + jobs overlay), so this bounds the reads one page load costs.
 const JOINABLE_CANDIDATE_LIMIT = 25;
 
+/** A room as the browser page shows it: enough to decide whether to walk in. */
+export interface OpenRoom {
+  code: string;
+  trackId: string;
+  laps: number;
+  maxPlayers: number;
+  players: number;
+  createdAt: number;
+}
+
 /**
- * Find an already-open room a new player can drop into, or undefined if none exists.
- *
- * IMPORTANT HONESTY NOTE: the server does not know how many players are currently in a room.
- * Presence (who is actually connected right now) lives entirely in Supabase Realtime, which
- * this server-side code has no access to — `rooms.settings.maxPlayers` is a configured cap,
- * not an occupancy count, and nothing persisted here tracks how many devices are in a lobby.
- * So this function CANNOT filter out full rooms, and it cannot literally rank rooms by
- * "closest to full" as the ideal behaviour would. If real occupancy-aware matchmaking is
- * wanted, the room lifecycle (join/leave presence events, already flowing through
- * lib/realtime.ts) needs to update a persisted counter on the room row that this function can
- * then read — that is out of scope here since lib/realtime.ts is off-limits for this change.
- *
- * As an honest approximation given only what the server has: prefer the lobby room with the
- * highest settings revision (a proxy for "someone is actively configuring this lobby right
- * now", which correlates with people actually being present), breaking ties by most recent
- * activity. A stale/abandoned or already-racing room is never returned.
+ * Rooms a player could walk into right now: still in the lobby, not full, and with a host that
+ * has reported in recently. A room whose host stopped reporting is treated as abandoned —
+ * better to hide a live room briefly than to send someone into an empty one.
  */
-export async function findJoinableRoom(): Promise<Room | undefined> {
+export async function listOpenRooms(limit = 20): Promise<OpenRoom[]> {
   const client = getServiceClient();
   const { data, error } = await client
     .from("rooms")
     .select("code")
-    .order("created_at", { ascending: false })
+    .eq("status", "lobby")
+    .order("updated_at", { ascending: false })
     .limit(JOINABLE_CANDIDATE_LIMIT);
   if (error) throw new Error(`failed to list rooms: ${error.message}`);
-  if (!data || data.length === 0) return undefined;
+  if (!data || data.length === 0) return [];
 
   const now = Date.now();
-  let best: Room | undefined;
-  for (const row of data as { code: string }[]) {
-    const room = await getRoom(row.code);
-    if (!room || room.status !== "lobby") continue;
-    if (now - room.updatedAt > JOINABLE_STALE_MS) continue;
-    if (
-      !best ||
-      room.revision > best.revision ||
-      (room.revision === best.revision && room.updatedAt > best.updatedAt)
-    ) {
-      best = room;
-    }
-  }
-  return best;
+  const rooms = await Promise.all((data as { code: string }[]).map((row) => getRoom(row.code)));
+  return rooms
+    .filter((room): room is Room => Boolean(room))
+    .filter((room) => room.status === "lobby")
+    .filter((room) => room.occupancy !== null && now - room.occupancy.at <= OCCUPANCY_STALE_MS)
+    .filter((room) => room.occupancy!.players > 0)
+    .filter((room) => room.occupancy!.players < room.settings.maxPlayers)
+    .sort((a, b) => (b.occupancy?.players ?? 0) - (a.occupancy?.players ?? 0))
+    .slice(0, limit)
+    .map((room) => ({
+      code: room.code,
+      trackId: room.settings.trackId,
+      laps: room.settings.laps,
+      maxPlayers: room.settings.maxPlayers,
+      players: room.occupancy?.players ?? 0,
+      createdAt: room.createdAt,
+    }));
+}
+
+/**
+ * Record what the host sees. Deliberately does not bump `revision`: this fires on a timer and
+ * would otherwise invalidate every client's settings CAS several times a minute.
+ */
+export async function reportRoomOccupancy(
+  room: Room,
+  players: number,
+): Promise<Room | undefined> {
+  const client = getServiceClient();
+  const next: Room = { ...room, occupancy: { players, at: Date.now() } };
+  const { data, error } = await client
+    .from("rooms")
+    .update({ settings: storedSettings(next, room.settings, room.race, room.revision) })
+    .eq("code", room.code)
+    .select("*")
+    .maybeSingle();
+  if (error) throw new Error(`failed to report occupancy: ${error.message}`);
+  return data ? rowToRoom(data as RoomRow) : undefined;
 }
 
 export async function getRoom(code: string): Promise<Room | undefined> {
