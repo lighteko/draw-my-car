@@ -87,32 +87,27 @@ export function normalizeRoomCode(code: string): string {
  * which loses sender attribution but keeps rooms playable.
  */
 export function getRoomMessageSecret(): string | null {
-  const configured =
-    process.env.ROOM_MESSAGE_SECRET ??
-    process.env.AUTH_SECRET_KEY ??
-    // Any stable server-only secret works as key material and every deployment that has
-    // multiplayer at all has this one.
-    process.env.SUPABASE_SECRET_KEY;
+  // Deliberately NOT falling back to SUPABASE_SECRET_KEY. That fallback existed once, and
+  // because every deployment with multiplayer has that variable, it silently switched signing
+  // on in production without anyone choosing it.
+  const configured = process.env.ROOM_MESSAGE_SECRET ?? process.env.AUTH_SECRET_KEY;
   return configured && configured.length > 0 ? configured : null;
 }
 
 /**
- * Whether message signing is switched on for this deployment.
+ * Whether message signing is switched on for this deployment. Opt-in, never inferred.
  *
- * Signing needs `crypto.subtle`, which browsers only expose in a secure context — HTTPS or
- * localhost. A phone opening the dev server over a LAN address (http://192.168.x.x) therefore
- * cannot sign anything, and every peer that CAN sign drops all of its traffic: the phone's car
- * never appears and it drives alone. That failure is silent and looks exactly like a game bug.
+ * This is hardening, and when it misfires it does not degrade — it removes players from each
+ * other's screens with no error anywhere. It has already done that twice: once by keying off
+ * a secret every deployment happens to have, and once by demanding `crypto.subtle`, which
+ * browsers withhold outside a secure context, so a phone on a plain-http origin could not sign
+ * and every peer discarded it.
  *
- * So enforcement is on in production, where the app is served over HTTPS and every client can
- * hold up its end, and off in development unless explicitly asked for. Set
- * ROOM_MESSAGE_ENFORCE=1 to exercise it locally over HTTPS or localhost only.
+ * So it stays off until someone sets ROOM_MESSAGE_ENFORCE=1 *and* provides a secret, having
+ * checked that every client will reach the game over HTTPS.
  */
 export function isRoomMessageAuthConfigured(): boolean {
-  if (getRoomMessageSecret() === null) return false;
-  if (process.env.ROOM_MESSAGE_ENFORCE === "1") return true;
-  if (process.env.ROOM_MESSAGE_ENFORCE === "0") return false;
-  return process.env.NODE_ENV === "production";
+  return process.env.ROOM_MESSAGE_ENFORCE === "1" && getRoomMessageSecret() !== null;
 }
 
 // --- signing / verifying (server only) ---
