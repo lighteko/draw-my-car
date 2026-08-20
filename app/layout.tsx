@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Black_Han_Sans, Geist_Mono, Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
 import { RotateGate } from "@/components/RotateGate";
+import { SuppressContextMenu } from "@/components/SuppressContextMenu";
 
 // Korean-first body face — the UI is entirely in Korean, so Latin-only faces would leave
 // every label to a system fallback.
@@ -58,6 +59,7 @@ export default function RootLayout({
       <body className="min-h-dvh">
         {children}
         <RotateGate />
+        <SuppressContextMenu />
       </body>
     </html>
   );
