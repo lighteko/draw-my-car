@@ -865,7 +865,10 @@ canvas {
 }
 
 @media (orientation: landscape) and (max-height: 400px) and (max-width: 700px) {
-  .garage-header .game-panel > span:nth-child(n + 2) {
+  /* Not enough height for words up here: the header chips keep their icon and drop their
+     label. Targeted by class rather than by position, since each chip is now a link plus a
+     button rather than a flat row of spans. */
+  .garage-nav-label {
     display: none;
   }
 

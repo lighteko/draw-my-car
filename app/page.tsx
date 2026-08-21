@@ -98,10 +98,22 @@ export default function Home() {
         </div>
         {/* No map-lab link: it is an admin tool, reached by typing /admin/maps, not something
             players should find in the garage. The route still guards itself with a password. */}
+        {/* Records live up here rather than in the bottom cluster: that cluster only renders
+            once a car is selected, so a player with nothing drawn yet could not reach them. */}
         <div className="flex items-center gap-2">
           <div className="game-panel hidden items-center gap-2 rounded-full px-4 py-2 text-sm sm:flex">
             <span className="text-amber-300">◈</span> 차량 {count}대
           </div>
+          <Link
+            href="/leaderboard"
+            aria-label="전체 순위"
+            className="game-panel touch-target flex items-center gap-2 rounded-full px-3.5 py-2 text-sm transition hover:border-amber-400/50"
+          >
+            <span className="text-amber-300" aria-hidden>
+              ▲
+            </span>
+            <span className="garage-nav-label">순위</span>
+          </Link>
           {ready && <ProfileChip username={username} onEdit={() => setEditingName(true)} />}
         </div>
       </header>
@@ -203,23 +215,15 @@ export default function Home() {
               </span>
             )}
           </button>
-          <div className="flex items-center gap-2">
-            <Link
-              href={`/race/random?car=${selected.id}`}
-              onClick={() => {
-                if (isTouchDevice()) void enterFullscreen();
-              }}
-              className="btn-ghost px-5 py-2.5 text-sm"
-            >
-              연습 주행
-            </Link>
-            <Link href="/me" className="btn-ghost px-5 py-2.5 text-sm">
-              내 기록
-            </Link>
-            <Link href="/leaderboard" className="btn-ghost px-5 py-2.5 text-sm">
-              전체 순위
-            </Link>
-          </div>
+          <Link
+            href={`/race/random?car=${selected.id}`}
+            onClick={() => {
+              if (isTouchDevice()) void enterFullscreen();
+            }}
+            className="btn-ghost px-5 py-2.5 text-sm"
+          >
+            연습 주행
+          </Link>
         </div>
       )}
 
@@ -240,22 +244,36 @@ export default function Home() {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * The chip is two controls in one pill: the name opens the player's own records, the pencil
+ * renames them. Tapping your own name expecting your profile and getting a rename dialog is
+ * the wrong default, but the pencil was the only way to rename, so it stays as its own target.
+ */
 function ProfileChip({ username, onEdit }: { username: string; onEdit: () => void }) {
   const initial = username.trim().charAt(0).toUpperCase() || "?";
   return (
-    <button
-      type="button"
-      onClick={onEdit}
-      className="game-panel touch-target flex items-center gap-2.5 rounded-full py-1.5 pl-1.5 pr-3 transition hover:border-amber-400/50"
-    >
-      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-600 font-heading text-sm font-bold text-[#2a1608]">
-        {initial}
-      </span>
-      <span className="max-w-[8rem] truncate text-sm font-medium">{username}</span>
-      <span className="text-xs text-white/40" aria-hidden>
+    <div className="game-panel flex items-center rounded-full py-1.5 pl-1.5 pr-1.5 transition focus-within:border-amber-400/50 hover:border-amber-400/50">
+      <Link
+        href="/me"
+        aria-label={`${username} 내 기록`}
+        className="touch-target flex items-center gap-2.5 rounded-full pr-2"
+      >
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-b from-amber-300 to-amber-600 font-heading text-sm font-bold text-[#2a1608]">
+          {initial}
+        </span>
+        <span className="garage-nav-label max-w-[8rem] truncate text-sm font-medium">
+          {username}
+        </span>
+      </Link>
+      <button
+        type="button"
+        onClick={onEdit}
+        aria-label="이름 바꾸기"
+        className="touch-target flex h-8 w-8 items-center justify-center rounded-full text-xs text-white/40 transition hover:bg-white/10 hover:text-white"
+      >
         ✎
-      </span>
-    </button>
+      </button>
+    </div>
   );
 }
 
