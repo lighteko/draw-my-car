@@ -37,12 +37,28 @@ body {
   -webkit-touch-callout: none;
 }
 
+/* Safari does not inherit user-select into form controls — they carry a UA `auto` that the
+   body rule above never overrides. So on iOS a long press on a button still counts as a press
+   on selectable text and raises the selection loupe, that magnifier that pops up mid-corner.
+   Naming the controls is what actually turns it off. */
+button,
+a,
+label,
+summary,
+[role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 input,
 textarea,
 select,
 [contenteditable="true"] {
   -webkit-user-select: text;
   user-select: text;
+  /* Typing still wants the loupe: it is how you place a caret without a mouse. */
+  -webkit-touch-callout: default;
 }
 
 /* Long-pressing a car thumbnail should not offer to save or drag the image. */
