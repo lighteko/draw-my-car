@@ -16,8 +16,6 @@ export interface Room {
   status: RoomStatus;
   settings: RaceSettings;
   race: RaceSnapshot | null;
-  /** Player count last reported by the host, or null if it never reported. */
-  occupancy: RoomOccupancy | null;
   /** Monotonic mutation revision persisted inside settings JSON. */
   revision: number;
   version: string;
@@ -33,7 +31,6 @@ interface StoredRoomMeta {
   ownerTokenHash?: string;
   race?: RaceSnapshot | null;
   revision?: number;
-  occupancy?: RoomOccupancy | null;
 }
 
 type StoredSettings = RaceSettings & { __room?: StoredRoomMeta };
@@ -48,6 +45,7 @@ interface RoomRow {
 }
 
 interface RoomEventRow {
+  id: string;
   data: { status?: unknown; settings?: unknown };
   updated_at: string;
 }
@@ -72,7 +70,6 @@ function rowToRoom(r: RoomRow): Room {
     status: r.status,
     settings,
     race: parseRaceSnapshot(meta?.race) ?? null,
-    occupancy: parseOccupancy(meta?.occupancy),
     revision:
       Number.isInteger(meta?.revision) && (meta?.revision as number) >= 0
         ? (meta?.revision as number)
@@ -92,10 +89,20 @@ function rowToRoom(r: RoomRow): Room {
  *
  * The server cannot see this for itself: membership lives in Supabase Realtime presence, which
  * only connected clients can read. Rather than guess, the host — which already has the roster
- * on screen — reports it. One writer means no read-modify-write races over the JSON blob, and
- * a room whose host has gone quiet simply ages out of the browser, which is the behaviour we
- * wanted anyway.
+ * on screen — reports it. One writer means no read-modify-write races, and a room whose host
+ * has gone quiet simply ages out of the browser, which is the behaviour we wanted anyway.
+ *
+ * It lives in a row of its own, keyed only by room code. It used to ride inside the settings
+ * blob, which put it on the wrong side of the state overlay below: the moment a room recorded
+ * any state event — the host picking a different map was enough — reads came from the overlay
+ * and every later report was written somewhere nothing read from. The room then aged out of
+ * the browser while its host was sitting in it. Being off the revision chain also makes the
+ * write idempotent by construction, which matters for something that fires every 15 seconds.
  */
+function occupancyRowId(code: string): string {
+  return `room-occupancy:${code}`;
+}
+
 function parseOccupancy(value: unknown): RoomOccupancy | null {
   if (typeof value !== "object" || value === null) return null;
   const { players, at } = value as { players?: unknown; at?: unknown };
@@ -116,7 +123,6 @@ function storedSettings(
       ...(room.ownerTokenHash ? { ownerTokenHash: room.ownerTokenHash } : {}),
       race,
       revision,
-      occupancy: room.occupancy,
     },
   };
 }
@@ -198,46 +204,60 @@ export async function listOpenRooms(limit = 20): Promise<OpenRoom[]> {
     .order("updated_at", { ascending: false })
     .limit(JOINABLE_CANDIDATE_LIMIT);
   if (error) throw new Error(`failed to list rooms: ${error.message}`);
-  if (!data || data.length === 0) return [];
+  const codes = ((data ?? []) as { code: string }[]).map((row) => row.code);
+  if (codes.length === 0) return [];
+
+  // Occupancy first, in one query, so the expensive per-room read below only runs for rooms
+  // that could actually be listed. Most candidates are abandoned lobbies nobody reported on.
+  const { data: reports, error: reportError } = await client
+    .from("jobs")
+    .select("id, data")
+    .in("id", codes.map(occupancyRowId));
+  if (reportError) throw new Error(`failed to read occupancy: ${reportError.message}`);
 
   const now = Date.now();
-  const rooms = await Promise.all((data as { code: string }[]).map((row) => getRoom(row.code)));
+  const occupancy = new Map<string, RoomOccupancy>();
+  for (const row of (reports ?? []) as { id: string; data: unknown }[]) {
+    const parsed = parseOccupancy(row.data);
+    if (!parsed || parsed.players <= 0) continue;
+    if (now - parsed.at > OCCUPANCY_STALE_MS) continue;
+    occupancy.set(row.id.slice(occupancyRowId("").length), parsed);
+  }
+  if (occupancy.size === 0) return [];
+
+  // The base row's `status` can be stale — a room that has started a race keeps `lobby` there
+  // until the overlay is applied — so the rooms that got this far are still read in full.
+  const rooms = await Promise.all([...occupancy.keys()].map((code) => getRoom(code)));
   return rooms
     .filter((room): room is Room => Boolean(room))
     .filter((room) => room.status === "lobby")
-    .filter((room) => room.occupancy !== null && now - room.occupancy.at <= OCCUPANCY_STALE_MS)
-    .filter((room) => room.occupancy!.players > 0)
-    .filter((room) => room.occupancy!.players < room.settings.maxPlayers)
-    .sort((a, b) => (b.occupancy?.players ?? 0) - (a.occupancy?.players ?? 0))
+    .map((room) => ({ room, players: occupancy.get(room.code)!.players }))
+    .filter(({ room, players }) => players < room.settings.maxPlayers)
+    .sort((a, b) => b.players - a.players)
     .slice(0, limit)
-    .map((room) => ({
+    .map(({ room, players }) => ({
       code: room.code,
       trackId: room.settings.trackId,
       laps: room.settings.laps,
       maxPlayers: room.settings.maxPlayers,
-      players: room.occupancy?.players ?? 0,
+      players,
       createdAt: room.createdAt,
     }));
 }
 
 /**
- * Record what the host sees. Deliberately does not bump `revision`: this fires on a timer and
- * would otherwise invalidate every client's settings CAS several times a minute.
+ * Record what the host sees. Deliberately off the revision chain: this fires on a timer and
+ * bumping the revision would invalidate every client's settings CAS several times a minute.
  */
-export async function reportRoomOccupancy(
-  room: Room,
-  players: number,
-): Promise<Room | undefined> {
-  const client = getServiceClient();
-  const next: Room = { ...room, occupancy: { players, at: Date.now() } };
-  const { data, error } = await client
-    .from("rooms")
-    .update({ settings: storedSettings(next, room.settings, room.race, room.revision) })
-    .eq("code", room.code)
-    .select("*")
-    .maybeSingle();
+export async function reportRoomOccupancy(code: string, players: number): Promise<void> {
+  const { error } = await getServiceClient()
+    .from("jobs")
+    .upsert({
+      id: occupancyRowId(code),
+      data: { players, at: Date.now() } satisfies RoomOccupancy,
+      updated_at: new Date().toISOString(),
+    });
   if (error) throw new Error(`failed to report occupancy: ${error.message}`);
-  return data ? rowToRoom(data as RoomRow) : undefined;
 }
 
 export async function getRoom(code: string): Promise<Room | undefined> {
@@ -252,18 +272,23 @@ export async function getRoom(code: string): Promise<Room | undefined> {
   // The deployed database grants immutable inserts but may not grant UPDATE on rooms.
   // Store mutations as revision-keyed events in the existing jobs table, then overlay the
   // latest event. A deterministic event id makes concurrent writes true compare-and-swap.
+  //
+  // "Latest" means the highest revision, not the most recent timestamp. Ordering by the clock
+  // let a stale event win whenever two writes landed close together or a clock stepped, and
+  // the room then silently reverted a transition — a room that had just been reset to the
+  // lobby would read as `racing` again and throw everyone back into the race they had
+  // finished. The revision is the only thing that actually defines the order here.
   const { data: eventData, error: eventError } = await getServiceClient()
     .from("jobs")
-    .select("data, updated_at")
+    .select("id, data, updated_at")
     .like("id", `room-state:${code}:%`)
     .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(OVERLAY_SCAN_LIMIT);
   if (eventError) throw new Error(`failed to read room state: ${eventError.message}`);
-  if (!eventData) return rowToRoom(data as RoomRow);
+  const event = latestRoomEvent((eventData ?? []) as RoomEventRow[]);
+  if (!event) return rowToRoom(data as RoomRow);
 
   const base = data as RoomRow;
-  const event = eventData as RoomEventRow;
   const status = event.data?.status;
   if (status !== "lobby" && status !== "racing" && status !== "finished") {
     return rowToRoom(base);
@@ -274,6 +299,25 @@ export async function getRoom(code: string): Promise<Room | undefined> {
     settings: event.data.settings,
     updated_at: event.updated_at,
   });
+}
+
+/**
+ * How many recent state events to inspect. Only the highest revision matters, and writes are
+ * serialised by the CAS, so a handful is always enough to contain the winner.
+ */
+const OVERLAY_SCAN_LIMIT = 10;
+
+function eventRevision(id: string): number {
+  const revision = Number.parseInt(id.slice(id.lastIndexOf(":") + 1), 10);
+  return Number.isInteger(revision) ? revision : -1;
+}
+
+function latestRoomEvent(rows: RoomEventRow[]): RoomEventRow | null {
+  let best: RoomEventRow | null = null;
+  for (const row of rows) {
+    if (!best || eventRevision(row.id) > eventRevision(best.id)) best = row;
+  }
+  return best;
 }
 
 async function casUpdate(
@@ -288,7 +332,7 @@ async function casUpdate(
       id: `room-state:${room.code}:${room.revision + 1}`,
       data: { status: patch.status, settings },
     })
-    .select("data, updated_at")
+    .select("id, data, updated_at")
     .maybeSingle();
   if (error?.code === "23505") return undefined;
   if (error) throw new Error(`failed to update room: ${error.message}`);
@@ -318,6 +362,20 @@ export async function startRoomRace(
 ): Promise<Room | undefined> {
   if (room.status !== "lobby") return undefined;
   return casUpdate(room, { settings: room.settings, race, status: "racing" });
+}
+
+/**
+ * Close a race out. Without this the room stays `racing` forever after the last car crosses
+ * the line, and anything that keys off status keeps treating a race that is over as live —
+ * most visibly, opening the room link drops the arrival straight back into the finished race.
+ *
+ * Guarded by raceId, not just by CAS: two clients calling this for the same race is expected
+ * (the owner may have several tabs), while a call naming an older race is stale and must not
+ * end the one now running.
+ */
+export async function finishRoomRace(room: Room, raceId: string): Promise<Room | undefined> {
+  if (room.status !== "racing" || room.race?.raceId !== raceId) return undefined;
+  return casUpdate(room, { settings: room.settings, race: room.race, status: "finished" });
 }
 
 export async function resetRoomToLobby(room: Room): Promise<Room | undefined> {

@@ -396,8 +396,12 @@ export function Lobby({
       if (isTouchDevice()) await enterFullscreen();
       enterCanonicalRace(updated);
     } catch (error) {
+      // A start that reached the server but whose reply did not reach us looks exactly like a
+      // failure here, and the room is already racing. Re-read it and walk in if so, rather
+      // than leaving the owner staring at an error next to a race they successfully started.
+      const canonical = await refreshRoom().catch(() => null);
+      if (canonical && enterCanonicalRace(canonical)) return;
       setErrorMessage(error instanceof Error ? error.message : "레이스를 시작하지 못했습니다");
-      await refreshRoom().catch(() => null);
       startingRef.current = false;
       setStarting(false);
     }

@@ -128,6 +128,7 @@ function RoomRace() {
   const gridRef = useRef<GridSlot[]>([]);
   const primarySessionRef = useRef(false);
   const rematchingRef = useRef(false);
+  const raceClosedRef = useRef(false);
   const sessionId = useMemo(
     () => (deviceId ? createPresenceSessionId(deviceId) : ""),
     [deviceId],
@@ -145,6 +146,13 @@ function RoomRace() {
           `/api/rooms/${params.code}`,
         );
         const requestEndedAt = Date.now();
+        // Reloading the results screen is the ordinary way to hit `finished`. There is nothing
+        // left to drive and the standings only ever lived in Realtime, so send the driver to
+        // the lobby instead of showing them an error about a race they just completed.
+        if (room.status === "finished") {
+          router.replace(`/r/${params.code}?stay=1`);
+          return;
+        }
         if (room.status !== "racing" || !room.race) {
           throw new Error("진행 중인 레이스가 없습니다.");
         }
@@ -197,7 +205,7 @@ function RoomRace() {
     return () => {
       cancelled = true;
     };
-  }, [deviceId, params.code, ready]);
+  }, [deviceId, params.code, ready, router]);
 
   useEffect(() => {
     if (!config || !deviceId) return;
@@ -206,15 +214,38 @@ function RoomRace() {
 
     const verifyCanonicalRace = async () => {
       const { room } = await apiGet<{ room: PublicRoom }>(`/api/rooms/${params.code}`);
-      if (room.status !== "racing" || room.race?.raceId !== config.raceId) {
+      // `finished` is a normal end state, not a lost room — the results screen stays up
+      // until the driver leaves it, and only a *different* race means this one is gone.
+      if (room.race?.raceId !== config.raceId || room.status === "lobby") {
         router.push(`/r/${params.code}?stay=1`);
       }
+    };
+
+    /**
+     * Move the room to `finished` once every car on the grid is home.
+     *
+     * Only the owner can do this, and only one tab of it, but the call still has to tolerate
+     * being made twice: the condition is re-evaluated on every progress message, and a late
+     * arrival can satisfy it again. The route treats a repeat for the same race as success,
+     * so the local guard here is an optimisation rather than the correctness boundary.
+     */
+    const closeRaceIfComplete = (standings: Standing[]) => {
+      if (!isOwner || !primarySessionRef.current || raceClosedRef.current) return;
+      if (gridRef.current.length === 0) return;
+      const done = new Set(standings.filter((entry) => entry.finished).map((e) => e.deviceId));
+      if (!gridRef.current.every((slot) => done.has(slot.deviceId))) return;
+      raceClosedRef.current = true;
+      void apiPost(`/api/rooms/${params.code}/finish`, { raceId: config.raceId }).catch(() => {
+        // A failure just leaves the room `racing`; the owner's rematch still resets it.
+        raceClosedRef.current = false;
+      });
     };
 
     const broadcastStandings = () => {
       if (!isOwner || !primarySessionRef.current) return;
       const next = computeStandings(progressMap.current, config.gateCount);
       setStandings(next);
+      closeRaceIfComplete(next);
       void handleRef.current
         ?.send({
           kind: "standings",
@@ -542,7 +573,7 @@ function RoomRace() {
       const { room } = await apiGet<{ room: PublicRoom; serverNow: number }>(
         `/api/rooms/${params.code}`,
       );
-      if (room.status !== "racing" || !room.race) {
+      if (room.status === "lobby" || !room.race) {
         router.push(`/r/${params.code}?stay=1`);
         return;
       }
@@ -556,7 +587,7 @@ function RoomRace() {
         const { room: retryRoom } = await apiGet<{ room: PublicRoom; serverNow: number }>(
           `/api/rooms/${params.code}`,
         );
-        if (retryRoom.status === "racing" && retryRoom.race) {
+        if (retryRoom.status !== "lobby" && retryRoom.race) {
           await apiPost(`/api/rooms/${params.code}/reset`, {
             expectedVersion: retryRoom.version,
             raceId: retryRoom.race.raceId,

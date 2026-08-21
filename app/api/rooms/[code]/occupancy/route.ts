@@ -9,8 +9,8 @@ const MAX_REPORTED_PLAYERS = 64;
  * POST /api/rooms/[code]/occupancy — the host tells the server how many people it can see.
  *
  * Only the host may report, for two reasons: the owner cookie makes the number attributable,
- * and a single writer means these timer-driven updates cannot race each other over the room's
- * JSON blob the way one-report-per-player would.
+ * and a single writer means these timer-driven updates cannot race each other the way
+ * one-report-per-player would.
  */
 export async function POST(
   req: NextRequest,
@@ -28,6 +28,6 @@ export async function POST(
     return NextResponse.json({ error: "잘못된 인원 수입니다" }, { status: 400 });
   }
   const players = Math.max(0, Math.min(MAX_REPORTED_PLAYERS, body!.players as number));
-  await reportRoomOccupancy(room, players);
+  await reportRoomOccupancy(code, players);
   return NextResponse.json({ ok: true });
 }
