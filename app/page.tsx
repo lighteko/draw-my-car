@@ -213,6 +213,9 @@ export default function Home() {
             >
               연습 주행
             </Link>
+            <Link href="/me" className="btn-ghost px-5 py-2.5 text-sm">
+              내 기록
+            </Link>
             <Link href="/leaderboard" className="btn-ghost px-5 py-2.5 text-sm">
               전체 순위
             </Link>

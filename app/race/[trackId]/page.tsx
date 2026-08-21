@@ -8,6 +8,7 @@ import { resolveSoloTrack } from "@/lib/mapCatalog";
 import { apiGet } from "@/lib/api";
 import { RaceSceneClient } from "@/components/RaceSceneClient";
 import type { Car } from "@/lib/cars";
+import { recordSoloLap } from "@/lib/soloRecords";
 
 const ACTIVE_CAR_KEY = "dmc_active_car";
 
@@ -93,6 +94,13 @@ function Practice() {
       adminMode={fromMapLab}
       carGlbUrl={config.glb}
       laps={laps}
+      onFinished={(_totalMs, lapTimes) => {
+        // The record is a single lap, matching the global board, so a multi-lap practice run
+        // contributes only its fastest one. Map-lab test drives are excluded: the track is
+        // still being edited, so a time on it is not a time on the map anyone else races.
+        if (fromMapLab || lapTimes.length === 0 || !config.track) return;
+        recordSoloLap(config.track.id, Math.min(...lapTimes));
+      }}
       onExit={() => router.push(fromMapLab ? "/admin/maps" : "/")}
       exitLabel={fromMapLab ? "맵 제작실로" : "차고로"}
     />
