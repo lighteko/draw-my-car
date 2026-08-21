@@ -129,6 +129,8 @@ function RoomRace() {
   const primarySessionRef = useRef(false);
   const rematchingRef = useRef(false);
   const raceClosedRef = useRef(false);
+  /** Best lap per device, collected by the owner and posted once the race closes. */
+  const bestLapsRef = useRef<Map<string, number>>(new Map());
   const sessionId = useMemo(
     () => (deviceId ? createPresenceSessionId(deviceId) : ""),
     [deviceId],
@@ -235,7 +237,13 @@ function RoomRace() {
       const done = new Set(standings.filter((entry) => entry.finished).map((e) => e.deviceId));
       if (!gridRef.current.every((slot) => done.has(slot.deviceId))) return;
       raceClosedRef.current = true;
-      void apiPost(`/api/rooms/${params.code}/finish`, { raceId: config.raceId }).catch(() => {
+      const results = gridRef.current
+        .map((slot) => ({ deviceId: slot.deviceId, lapMs: bestLapsRef.current.get(slot.deviceId) }))
+        .filter((entry): entry is { deviceId: string; lapMs: number } => entry.lapMs !== undefined);
+      void apiPost(`/api/rooms/${params.code}/finish`, {
+        raceId: config.raceId,
+        results,
+      }).catch(() => {
         // A failure just leaves the room `racing`; the owner's rematch still resets it.
         raceClosedRef.current = false;
       });
@@ -357,6 +365,7 @@ function RoomRace() {
           bumpOwner(message.deviceId, { lap: message.lap, nextGate: message.nextGate });
         }
       } else if (message.kind === "finished") {
+        bestLapsRef.current.set(message.deviceId, message.bestLapMs);
         if (message.senderDeviceId === message.deviceId) {
           bumpOwner(message.deviceId, {
             lap: message.lap,
@@ -520,10 +529,13 @@ function RoomRace() {
         .catch(() => {});
     }
   };
-  const reportFinished = (totalMs: number) => {
+  const reportFinished = (totalMs: number, lapTimes: number[]) => {
     if (!config || !primarySessionRef.current) return;
     const completed = { ...localProgressRef.current, finished: true, totalMs };
     localProgressRef.current = completed;
+    // The global board ranks single laps, so a race only contributes its fastest one.
+    const bestLapMs = lapTimes.length > 0 ? Math.min(...lapTimes) : totalMs;
+    bestLapsRef.current.set(deviceId, bestLapMs);
     if (isOwner) {
       applyOwnerProgress(deviceId, {
         lap: completed.lap,
@@ -542,6 +554,7 @@ function RoomRace() {
           lap: completed.lap,
           nextGate: completed.nextGate,
           totalMs,
+          bestLapMs,
         })
         .catch(() => {});
     }

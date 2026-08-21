@@ -460,6 +460,7 @@ describe.skipIf(!HAVE_ENV)("multiplayer room lifecycle (real server + real Supab
         deviceId: guestDeviceId,
         lap: race!.laps,
         nextGate: 0,
+        bestLapMs: 12_000,
         totalMs: 42_000,
       });
       const finishedSeen = (await host.waitForMessage(

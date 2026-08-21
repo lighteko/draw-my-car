@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { finishRoomRace, getRoom, publicRoom } from "@/lib/rooms";
 import { isRoomOwner } from "@/lib/roomOwner";
+import { isPlausibleLap, recordLapTimes } from "@/lib/leaderboard";
+import { getUsernames } from "@/lib/players";
 
 /**
  * POST /api/rooms/[code]/finish — close out a race whose last car has crossed the line.
@@ -24,7 +26,9 @@ export async function POST(
     return NextResponse.json({ error: "only the room owner can end the race" }, { status: 403 });
   }
 
-  const body = (await req.json().catch(() => null)) as { raceId?: unknown } | null;
+  const body = (await req.json().catch(() => null)) as
+    | { raceId?: unknown; results?: unknown }
+    | null;
   if (typeof body?.raceId !== "string") {
     return NextResponse.json({ error: "raceId required" }, { status: 400 });
   }
@@ -33,6 +37,36 @@ export async function POST(
   }
   if (room.status !== "racing") {
     return NextResponse.json({ room: publicRoom(room), serverNow: Date.now() });
+  }
+
+  // Lap times ride in on the close-out because this is the one call the room already trusts:
+  // owner-gated, named to a specific race, and made exactly when the race is over. Entries are
+  // still checked against the grid — the owner reports for everyone, so nothing stops a
+  // doctored payload from naming a device that never raced.
+  const admitted = new Set(room.race.grid.map((slot) => slot.deviceId));
+  const claimed = Array.isArray(body.results) ? body.results : [];
+  const laps = claimed
+    .filter((entry): entry is { deviceId: string; lapMs: number } => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const { deviceId, lapMs } = entry as { deviceId?: unknown; lapMs?: unknown };
+      return typeof deviceId === "string" && admitted.has(deviceId) && isPlausibleLap(lapMs);
+    })
+    .slice(0, admitted.size);
+
+  if (laps.length > 0) {
+    // Names come from the players table, never from the payload: the board is public, and the
+    // owner should not get to choose what everyone else is called on it.
+    const names = await getUsernames(laps.map((entry) => entry.deviceId));
+    await recordLapTimes(
+      laps.map((entry) => ({
+        deviceId: entry.deviceId,
+        username: names.get(entry.deviceId) ?? "이름 없는 주자",
+        trackId: room.race!.trackId,
+        lapMs: entry.lapMs,
+      })),
+    ).catch(() => {
+      // A board that missed a lap is not a reason to leave the race open.
+    });
   }
 
   const updated = await finishRoomRace(room, body.raceId);

@@ -203,15 +203,20 @@ export default function Home() {
               </span>
             )}
           </button>
-          <Link
-            href={`/race/random?car=${selected.id}`}
-            onClick={() => {
-              if (isTouchDevice()) void enterFullscreen();
-            }}
-            className="btn-ghost px-5 py-2.5 text-sm"
-          >
-            연습 주행
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/race/random?car=${selected.id}`}
+              onClick={() => {
+                if (isTouchDevice()) void enterFullscreen();
+              }}
+              className="btn-ghost px-5 py-2.5 text-sm"
+            >
+              연습 주행
+            </Link>
+            <Link href="/leaderboard" className="btn-ghost px-5 py-2.5 text-sm">
+              전체 순위
+            </Link>
+          </div>
         </div>
       )}
 

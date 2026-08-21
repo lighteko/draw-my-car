@@ -351,11 +351,15 @@ export function parseRoomMessage(value: unknown): RoomMessage | null {
           "lap",
           "nextGate",
           "totalMs",
+          "bestLapMs",
         ]) &&
           isBoundedString(value.raceId) &&
           isBoundedString(value.senderDeviceId) &&
           isBoundedString(value.deviceId) &&
           value.senderDeviceId === value.deviceId &&
+          typeof value.bestLapMs === "number" &&
+          Number.isFinite(value.bestLapMs) &&
+          value.bestLapMs >= 0 &&
           Number.isInteger(value.lap) &&
           (value.lap as number) >= 0 &&
           Number.isInteger(value.nextGate) &&

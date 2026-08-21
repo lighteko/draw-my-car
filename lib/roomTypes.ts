@@ -101,6 +101,8 @@ export type RoomMessage =
       lap: number;
       nextGate: number;
       totalMs: number;
+      /** Fastest single lap of this race, which is what the global board ranks. */
+      bestLapMs: number;
     }
   | { kind: "progress_request"; raceId: string; senderDeviceId: string }
   | {

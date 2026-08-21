@@ -158,7 +158,8 @@ export function RaceScene({
   onTransform?: (p: Vec3n, q: Quat) => void;
   /** Report own lap progress to the owner for ranking. */
   onProgress?: (lap: number, nextGate: number) => void;
-  onFinished?: (totalMs: number) => void;
+  /** Total race time plus every lap split, so the caller can report a best lap. */
+  onFinished?: (totalMs: number, lapTimes: number[]) => void;
   /** Owner-authoritative leaderboard for the HUD. */
   standings?: Standing[];
   /** Highlights the local player in the leaderboard. */
@@ -475,7 +476,7 @@ export function RaceScene({
         setResult({ totalMs, lapTimes: [...p.lapTimes] });
         setPhase("finished");
         playFinishFanfare();
-        onFinished?.(totalMs);
+        onFinished?.(totalMs, [...p.lapTimes]);
       }
     } else {
       p.nextGate = (p.nextGate + 1) % total;

@@ -247,6 +247,7 @@ describe("parseRoomMessage", () => {
         lap: 2,
         nextGate: 1,
         totalMs: 12_345,
+        bestLapMs: 12_345,
       }),
     ).not.toBeNull();
   });
@@ -278,7 +279,7 @@ describe("parseRoomMessage", () => {
         kind === "transform"
           ? { ...base, p: [0, 0, 0], q: [0, 0, 0, 1] }
           : kind === "finished"
-            ? { ...base, lap: 1, nextGate: 0, totalMs: 1 }
+            ? { ...base, lap: 1, nextGate: 0, totalMs: 1, bestLapMs: 1 }
             : kind === "progress_state"
               ? { ...base, lap: 1, nextGate: 0, finished: false, totalMs: null }
               : { ...base, lap: 1, nextGate: 0 };
@@ -315,6 +316,7 @@ describe("parseRoomMessage", () => {
       lap: 1,
       nextGate: 0,
       totalMs: -1,
+      bestLapMs: 1,
     },
     {
       kind: "standings",

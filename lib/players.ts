@@ -31,3 +31,26 @@ export async function upsertPlayer(deviceId: string, username?: string | null): 
   if (error) throw new Error(`failed to upsert player: ${error.message}`);
   return { deviceId: data.device_id, username: data.username };
 }
+
+/**
+ * Display names for a set of devices, as the player set them.
+ *
+ * The global board reads names from here rather than from whoever reported the race: the
+ * report is made by one player on everyone's behalf, and a public board is not something the
+ * reporter should get to write other people's names onto.
+ */
+export async function getUsernames(deviceIds: string[]): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  if (!hasSupabase() || deviceIds.length === 0) return names;
+
+  const { data, error } = await getServiceClient()
+    .from("players")
+    .select("device_id, username")
+    .in("device_id", deviceIds);
+  if (error) throw new Error(`failed to read usernames: ${error.message}`);
+
+  for (const row of (data ?? []) as { device_id: string; username: string | null }[]) {
+    if (row.username) names.set(row.device_id, row.username);
+  }
+  return names;
+}
